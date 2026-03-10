@@ -1,11 +1,29 @@
+use std::path::PathBuf;
 use std::process::Command as StdCommand;
+use std::sync::OnceLock;
 use tauri::{Emitter, Manager};
 
 pub mod config;
 pub mod dict;
+pub mod download;
 pub mod history;
 pub mod translate;
 pub mod tts;
+
+/// Resolved espeak-ng executable path (bundled resource or system fallback).
+static ESPEAK_PATH: OnceLock<PathBuf> = OnceLock::new();
+/// Resolved espeak-ng data directory.
+static ESPEAK_DATA: OnceLock<PathBuf> = OnceLock::new();
+
+/// Get the espeak-ng executable path (bundled or system).
+pub fn espeak_exe() -> &'static PathBuf {
+    ESPEAK_PATH.get().expect("espeak path not initialized")
+}
+
+/// Get the espeak-ng data directory.
+pub fn espeak_data() -> &'static PathBuf {
+    ESPEAK_DATA.get().expect("espeak data not initialized")
+}
 
 #[cfg(target_os = "windows")]
 fn simulate_ctrl_c() {
@@ -468,7 +486,8 @@ fn get_active_monitor_center() -> Result<[i32; 4], String> {
 
 #[tauri::command]
 fn get_ipa(text: String, lang: String) -> Result<String, String> {
-    let output = StdCommand::new("C:/Program Files/eSpeak NG/espeak-ng.exe")
+    let output = StdCommand::new(espeak_exe())
+        .env("ESPEAK_DATA_PATH", espeak_data())
         .args(&["-v", &lang, "--ipa", "-q", &text])
         .output();
 
@@ -829,10 +848,31 @@ fn get_history_count(search: Option<String>) -> Result<u32, String> {
     history::count(search.as_deref())
 }
 
+#[tauri::command]
+fn check_models(app_handle: tauri::AppHandle) -> Vec<download::MissingModel> {
+    let data_dir = app_handle.path().app_data_dir().unwrap_or_default();
+    download::check_models(&data_dir)
+}
+
+#[tauri::command]
+async fn start_download(app_handle: tauri::AppHandle) -> Result<(), String> {
+    let data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+    download::download_models(data_dir, app_handle).await
+}
+
+#[tauri::command]
+fn cancel_download() {
+    download::cancel();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(
             tauri_plugin_log::Builder::default()
                 .level(log::LevelFilter::Info)
@@ -842,6 +882,29 @@ pub fn run() {
             // Initialize config before anything else
             let data_dir = app.path().app_data_dir().unwrap_or_default();
             config::init(&data_dir);
+
+            // Resolve espeak-ng path: bundled resource → system fallback
+            {
+                let resource_dir = app.path().resource_dir().unwrap_or_default();
+                let bundled_exe = resource_dir.join("resources/espeak-ng/espeak-ng.exe");
+                let bundled_data = resource_dir.join("resources/espeak-ng/espeak-ng-data");
+                let system_exe = PathBuf::from("C:/Program Files/eSpeak NG/espeak-ng.exe");
+                let system_data = PathBuf::from("C:/Program Files/eSpeak NG/espeak-ng-data");
+
+                if bundled_exe.exists() {
+                    log::info!("[espeak] Using bundled: {}", bundled_exe.display());
+                    let _ = ESPEAK_PATH.set(bundled_exe);
+                    let _ = ESPEAK_DATA.set(bundled_data);
+                } else if system_exe.exists() {
+                    log::info!("[espeak] Using system install");
+                    let _ = ESPEAK_PATH.set(system_exe);
+                    let _ = ESPEAK_DATA.set(system_data);
+                } else {
+                    log::warn!("[espeak] Not found — IPA and Kokoro TTS will be unavailable");
+                    let _ = ESPEAK_PATH.set(bundled_exe); // will fail gracefully on use
+                    let _ = ESPEAK_DATA.set(bundled_data);
+                }
+            }
 
             // Initialize history DB
             if let Err(e) = history::init(&data_dir) {
@@ -887,6 +950,9 @@ pub fn run() {
             restore_hotkey,
             get_history,
             get_history_count,
+            check_models,
+            start_download,
+            cancel_download,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

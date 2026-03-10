@@ -6,3 +6,4 @@ build-errors*.txt
 test-kokoro.mjs
 *.partial
 _agent/
+src-tauri/resources/espeak-ng/

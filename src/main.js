@@ -341,6 +341,74 @@ pickerView.addEventListener('click', async (e) => {
   dismissTimer = setTimeout(hideOverlay, 2500);
 });
 
+// --- Model download ---
+
+const downloadView = document.getElementById('download-view');
+const downloadBar = document.getElementById('download-bar');
+const downloadModelName = document.getElementById('download-model-name');
+const downloadStats = document.getElementById('download-stats');
+const downloadSkip = document.getElementById('download-skip');
+
+function formatBytes(bytes) {
+  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`;
+  if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(0)} MB`;
+  return `${(bytes / 1e3).toFixed(0)} KB`;
+}
+
+async function checkAndDownloadModels() {
+  const missing = await invoke('check_models');
+  if (missing.length === 0) return true; // all models present
+
+  const totalBytes = missing.reduce((s, m) => s + m.size_bytes, 0);
+  console.log(`[lingualens] ${missing.length} models missing (${formatBytes(totalBytes)})`);
+
+  // Show download UI
+  downloadView.style.display = 'block';
+  downloadModelName.textContent = `${missing.length} files \u00B7 ${formatBytes(totalBytes)}`;
+  await appWindow.show();
+  await appWindow.setFocus();
+
+  return new Promise((resolve) => {
+    // Skip button — proceed without models
+    downloadSkip.addEventListener('click', () => {
+      invoke('cancel_download').catch(() => {});
+      downloadView.style.display = 'none';
+      appWindow.hide();
+      resolve(false);
+    }, { once: true });
+
+    // Progress listener
+    const unlisten = listen('download-progress', (event) => {
+      const p = event.payload;
+      const pct = p.overall_bytes_total > 0
+        ? ((p.overall_bytes_downloaded / p.overall_bytes_total) * 100)
+        : 0;
+      downloadBar.style.width = `${pct.toFixed(1)}%`;
+      downloadModelName.textContent = p.name;
+      downloadStats.textContent = `${formatBytes(p.overall_bytes_downloaded)} / ${formatBytes(p.overall_bytes_total)} \u00B7 ${pct.toFixed(0)}%`;
+    });
+
+    // Complete listener
+    const unlistenComplete = listen('download-complete', () => {
+      downloadView.style.display = 'none';
+      appWindow.hide();
+      unlisten.then(fn => fn());
+      unlistenComplete.then(fn => fn());
+      resolve(true);
+    });
+
+    // Start download
+    invoke('start_download').then(() => {
+      // download_complete event handles the resolve
+    }).catch((e) => {
+      console.warn('[lingualens] download error:', e);
+      downloadModelName.textContent = 'Download failed';
+      downloadStats.textContent = String(e);
+      // Don't auto-hide — let user click Skip
+    });
+  });
+}
+
 // --- Init ---
 
 let firstRun = false;
@@ -349,6 +417,9 @@ async function init() {
   console.log('[lingualens] init()');
 
   await loadConfig();
+
+  // Check for missing models and download if needed
+  await checkAndDownloadModels();
 
   firstRun = await invoke('is_first_run');
 

@@ -22,6 +22,7 @@ log = "0.4"
 tauri = { version = "2.10.3", features = ["tray-icon"] }
 tauri-plugin-log = "2"
 tauri-plugin-global-shortcut = "2"
+tauri-plugin-updater = "2"
 llama-cpp-2 = { version = "0.1", features = ["cuda"] }
 # CUDA 13.1 + VS 2026: requires CUDAFLAGS="--allow-unsupported-compiler" at build time
 encoding_rs = "0.8"
@@ -29,6 +30,9 @@ whatlang = "0.16"
 ort = { version = "2.0.0-rc.12", features = ["download-binaries", "cuda", "directml"] }
 hound = "3.5"
 rusqlite = { version = "0.31", features = ["bundled"] }
+reqwest = { version = "0.12", features = ["stream"] }
+futures-util = "0.3"
+tokio = { version = "1", features = ["fs"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61", features = [
