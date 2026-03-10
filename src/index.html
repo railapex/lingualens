@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LinguaLens</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="overlay" class="overlay hidden">
+    <!-- Translation view -->
+    <div id="translate-view">
+      <div id="hero" class="hero"></div>
+      <div id="ipa" class="ipa"></div>
+      <div id="l1" class="l1"></div>
+      <button id="speaker" class="speaker" title="Play audio">
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
+        </svg>
+      </button>
+    </div>
+
+    <!-- First-run language picker -->
+    <div id="picker" class="picker" style="display: none;">
+      <div class="picker-title">What are you learning?</div>
+      <div class="picker-grid">
+        <button class="lang-option" data-lang="es">Espa&ntilde;ol</button>
+        <button class="lang-option" data-lang="fr">Fran&ccedil;ais</button>
+        <button class="lang-option" data-lang="de">Deutsch</button>
+        <button class="lang-option" data-lang="it">Italiano</button>
+        <button class="lang-option" data-lang="pt">Portugu&ecirc;s</button>
+        <button class="lang-option" data-lang="ja">&#x65E5;&#x672C;&#x8A9E;</button>
+        <button class="lang-option" data-lang="zh">&#x4E2D;&#x6587;</button>
+        <button class="lang-option" data-lang="en">English</button>
+      </div>
+      <div class="picker-hint">Change anytime from the system tray.</div>
+    </div>
+  </div>
+  <script type="module" src="main.js"></script>
+</body>
+</html>

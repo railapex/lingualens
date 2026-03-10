@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LinguaLens Settings</title>
+  <link rel="stylesheet" href="settings.css">
+</head>
+<body>
+  <div class="tabs">
+    <button class="tab active" data-tab="settings">Settings</button>
+    <button class="tab" data-tab="history">History</button>
+  </div>
+
+  <!-- Settings Tab -->
+  <div id="tab-settings" class="tab-content active">
+
+    <section>
+      <h3>Language</h3>
+      <div class="field">
+        <label for="target-lang">Learning</label>
+        <select id="target-lang">
+          <option value="es">Espa&ntilde;ol</option>
+          <option value="en">English</option>
+          <option value="fr">Fran&ccedil;ais</option>
+          <option value="de">Deutsch</option>
+          <option value="it">Italiano</option>
+          <option value="pt">Portugu&ecirc;s</option>
+          <option value="ja">&#x65E5;&#x672C;&#x8A9E;</option>
+          <option value="zh">&#x4E2D;&#x6587;</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="native-lang">Native</label>
+        <select id="native-lang">
+          <option value="en">English</option>
+          <option value="es">Espa&ntilde;ol</option>
+          <option value="fr">Fran&ccedil;ais</option>
+          <option value="de">Deutsch</option>
+          <option value="it">Italiano</option>
+          <option value="pt">Portugu&ecirc;s</option>
+          <option value="ja">&#x65E5;&#x672C;&#x8A9E;</option>
+          <option value="zh">&#x4E2D;&#x6587;</option>
+        </select>
+      </div>
+    </section>
+
+    <section>
+      <h3>Audio</h3>
+      <div class="field">
+        <label for="voice">Voice</label>
+        <select id="voice">
+          <option value="">Default</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="auto-play">Auto-play</label>
+        <label class="toggle">
+          <input type="checkbox" id="auto-play">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div class="field">
+        <label for="replay-speed">Replay speed</label>
+        <div class="slider-row">
+          <input type="range" id="replay-speed" min="0.5" max="1.2" step="0.05">
+          <span id="replay-speed-val" class="slider-val">0.7x</span>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h3>Display</h3>
+      <div class="field">
+        <label for="theme">Theme</label>
+        <select id="theme">
+          <option value="system">System</option>
+          <option value="dark">Dark</option>
+          <option value="light">Light</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="show-ipa">Show IPA</label>
+        <label class="toggle">
+          <input type="checkbox" id="show-ipa">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div class="field">
+        <label for="dismiss-delay">Dismiss delay</label>
+        <div class="slider-row">
+          <input type="range" id="dismiss-delay" min="2000" max="8000" step="500">
+          <span id="dismiss-delay-val" class="slider-val">2s</span>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h3>Shortcut</h3>
+      <div class="field shortcut-field">
+        <label>Hotkey</label>
+        <div class="shortcut-display">
+          <kbd id="hotkey-display">Ctrl+Alt+L</kbd>
+          <button id="hotkey-change" class="btn-sm">Change</button>
+        </div>
+      </div>
+      <div id="hotkey-capture" class="hotkey-capture" style="display: none;">
+        <div class="capture-prompt">Press your shortcut...</div>
+        <kbd id="hotkey-preview" class="capture-preview"></kbd>
+        <div class="capture-actions">
+          <button id="hotkey-save" class="btn-sm btn-primary" disabled>Save</button>
+          <button id="hotkey-cancel" class="btn-sm">Cancel</button>
+        </div>
+        <div id="hotkey-error" class="capture-error"></div>
+      </div>
+    </section>
+
+    <section>
+      <h3>Developer</h3>
+      <div class="field">
+        <label for="force-cpu">Force CPU inference</label>
+        <label class="toggle">
+          <input type="checkbox" id="force-cpu">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div class="dev-hint">Skip GPU, use CPU for translation + TTS (restart required)</div>
+      <div class="field">
+        <label for="force-web-speech">Force Web Speech TTS</label>
+        <label class="toggle">
+          <input type="checkbox" id="force-web-speech">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div class="dev-hint">Skip Kokoro, use browser speech synthesis</div>
+      <div class="field">
+        <label for="force-dict-only">Force dictionary only</label>
+        <label class="toggle">
+          <input type="checkbox" id="force-dict-only">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div class="dev-hint">Skip TranslateGemma, single-word dictionary lookups only</div>
+      <div class="field">
+        <label for="force-clipboard">Force clipboard capture</label>
+        <label class="toggle">
+          <input type="checkbox" id="force-clipboard">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div class="dev-hint">Skip UI Automation, use Ctrl+C clipboard simulation</div>
+    </section>
+
+    <section class="about">
+      <h3>About</h3>
+      <div class="about-text">LinguaLens <span id="app-version">v0.1.0</span></div>
+    </section>
+  </div>
+
+  <!-- History Tab -->
+  <div id="tab-history" class="tab-content">
+    <div class="history-toolbar">
+      <input type="text" id="history-search" placeholder="Search translations...">
+    </div>
+    <div id="history-list" class="history-list">
+      <div class="history-empty">No translations yet</div>
+    </div>
+    <div id="history-pagination" class="history-pagination" style="display: none;">
+      <button id="history-prev" class="btn-sm" disabled>Prev</button>
+      <span id="history-page-info" class="page-info"></span>
+      <button id="history-next" class="btn-sm">Next</button>
+    </div>
+  </div>
+
+  <script type="module" src="settings.js"></script>
+</body>
+</html>

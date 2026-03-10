@@ -1,0 +1,8 @@
+node_modules/
+target/
+dist/
+models/
+build-errors*.txt
+test-kokoro.mjs
+*.partial
+_agent/
