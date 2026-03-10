@@ -1,0 +1,4 @@
+# CUDA 13.1 doesn't officially support VS 2026 (MSVC v18).
+# This flag tells nvcc to compile anyway — works fine in practice.
+[env]
+CUDAFLAGS = "--allow-unsupported-compiler"

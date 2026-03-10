@@ -1,0 +1,242 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  background: transparent;
+  overflow: hidden;
+  font-family: 'Segoe UI Variable', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* --- Dark theme (default) --- */
+.overlay {
+  --bg: rgba(28, 28, 32, 0.92);
+  --border: rgba(255, 255, 255, 0.08);
+  --hero: #f0f0f0;
+  --ipa: #a8c8f0;
+  --l1-text: rgba(255, 255, 255, 0.42);
+  --speaker: rgba(255, 255, 255, 0.35);
+  --speaker-hover: rgba(255, 255, 255, 0.80);
+}
+
+/* --- Light theme --- */
+.overlay[data-theme="light"] {
+  --bg: rgba(255, 255, 255, 0.92);
+  --border: rgba(0, 0, 0, 0.08);
+  --hero: #1a1a1a;
+  --ipa: #2b5ea8;
+  --l1-text: rgba(0, 0, 0, 0.38);
+  --speaker: rgba(0, 0, 0, 0.30);
+  --speaker-hover: rgba(0, 0, 0, 0.70);
+}
+
+.overlay {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) translateY(0);
+  width: 440px;
+  min-height: 110px;
+  padding: 18px 24px 14px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  backdrop-filter: blur(24px) saturate(1.4);
+  -webkit-backdrop-filter: blur(24px) saturate(1.4);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.08);
+  opacity: 1;
+  transition: opacity 0.18s ease-out, transform 0.18s ease-out;
+}
+
+.overlay.hidden {
+  opacity: 0;
+  transform: translate(-50%, -50%) translateY(4px);
+  pointer-events: none;
+}
+
+.overlay.compact {
+  width: 320px;
+}
+
+/* --- Hero row (target language text) --- */
+.hero {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--hero);
+  margin-bottom: 3px;
+  line-height: 1.35;
+  padding-right: 40px;
+}
+
+/* --- IPA row --- */
+.ipa {
+  font-size: 15px;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  color: var(--ipa);
+  margin-bottom: 10px;
+  line-height: 1.3;
+  min-height: 20px;
+}
+
+.ipa:empty {
+  display: none;
+}
+
+/* --- L1 reference row --- */
+.l1 {
+  font-size: 13px;
+  font-weight: 450;
+  color: var(--l1-text);
+  line-height: 1.4;
+  padding-top: 8px;
+  margin-top: 0;
+  border-top: 1px solid var(--border);
+  min-height: 20px;
+}
+
+.l1:empty {
+  display: none;
+}
+
+/* --- Loading shimmer bar --- */
+.shimmer {
+  display: inline-block;
+  width: 48px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--border);
+  position: relative;
+  overflow: hidden;
+  vertical-align: middle;
+}
+
+.shimmer::after {
+  content: '';
+  position: absolute;
+  left: -48px;
+  top: 0;
+  width: 48px;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, var(--ipa), transparent);
+  animation: shimmer 1.2s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  0%   { left: -48px; }
+  100% { left: 48px; }
+}
+
+/* Legacy loading dots (kept for first-run picker) */
+.loading-dot {
+  display: inline-block;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.5;
+  animation: dot-pulse 1.2s ease-in-out infinite;
+}
+.loading-dot:nth-child(2) { animation-delay: 0.2s; }
+.loading-dot:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes dot-pulse {
+  0%, 80%, 100% { opacity: 0.2; transform: scale(0.8); }
+  40% { opacity: 0.8; transform: scale(1.1); }
+}
+
+/* --- Speaker button --- */
+.speaker {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  background: none;
+  border: none;
+  width: 28px;
+  height: 28px;
+  padding: 4px;
+  cursor: pointer;
+  color: var(--speaker);
+  border-radius: 6px;
+  transition: color 0.15s, background 0.12s, transform 0.1s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.speaker:hover {
+  color: var(--speaker-hover);
+  background: var(--border);
+}
+
+.speaker:active {
+  transform: scale(0.92);
+}
+
+.speaker.playing {
+  color: var(--ipa);
+  animation: pulse-speaker 1s ease-in-out infinite;
+}
+
+@keyframes pulse-speaker {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
+}
+
+.speaker svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+
+/* --- First-run picker --- */
+.picker {
+  text-align: center;
+}
+
+.picker-title {
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--hero);
+  margin-bottom: 16px;
+}
+
+.picker-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.lang-option {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--hero);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+  font-family: inherit;
+}
+
+.lang-option:hover {
+  background: var(--border);
+  border-color: var(--ipa);
+}
+
+.picker-hint {
+  font-size: 13px;
+  color: var(--l1-text);
+  margin-top: 12px;
+}
