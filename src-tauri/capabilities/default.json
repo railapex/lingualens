@@ -15,7 +15,6 @@
     "core:window:allow-center",
     "core:window:allow-set-position",
     "core:window:allow-set-size",
-    "core:tray:default",
-    "updater:default"
+    "core:tray:default"
   ]
 }

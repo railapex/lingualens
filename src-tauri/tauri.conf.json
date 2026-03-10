@@ -48,10 +48,5 @@
       }
     }
   },
-  "plugins": {
-    "updater": {
-      "endpoints": ["https://github.com/programcsharp/lingualens/releases/latest/download/latest.json"],
-      "pubkey": ""
-    }
-  }
+  "plugins": {}
 }
