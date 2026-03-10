@@ -172,7 +172,8 @@ fn get_style_vector(voice_data: &[f32], token_count: usize) -> Vec<f32> {
 
 pub fn phonemize(text: &str, lang: &str) -> Result<String, String> {
     let espeak = espeak_lang(lang);
-    let output = StdCommand::new("C:/Program Files/eSpeak NG/espeak-ng.exe")
+    let output = StdCommand::new(crate::espeak_exe())
+        .env("ESPEAK_DATA_PATH", crate::espeak_data())
         .args(["-v", espeak, "--ipa", "-q", text])
         .output()
         .map_err(|e| format!("Failed to run espeak-ng: {e}"))?;

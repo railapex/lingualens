@@ -7,6 +7,20 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <!-- Model download view (first-run) -->
+  <div id="download-view" class="download-view" style="display: none;">
+    <div class="download-title">Downloading models...</div>
+    <div id="download-model-name" class="download-model-name"></div>
+    <div class="download-bar-container">
+      <div id="download-bar" class="download-bar"></div>
+    </div>
+    <div id="download-stats" class="download-stats"></div>
+    <div class="download-actions">
+      <button id="download-skip" class="download-skip">Skip — use basic mode</button>
+    </div>
+    <div class="download-hint">Translation + natural TTS require ~2.9 GB of model data.<br>Basic mode: dictionary lookups + system voices only.</div>
+  </div>
+
   <div id="overlay" class="overlay hidden">
     <!-- Translation view -->
     <div id="translate-view">
