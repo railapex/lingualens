@@ -144,13 +144,30 @@ function filterVoices(lang) {
 // --- Control handlers ---
 
 targetLangEl.addEventListener('change', async () => {
-  await updateConfig({ target_lang: targetLangEl.value });
-  filterVoices(targetLangEl.value);
+  const newTarget = targetLangEl.value;
+  // Swap if same as native
+  if (newTarget === nativeLangEl.value) {
+    nativeLangEl.value = config.target_lang;
+    await updateConfig({ native_lang: config.target_lang });
+  }
+  await updateConfig({ target_lang: newTarget });
+  filterVoices(newTarget);
   voiceEl.value = '';
   await updateConfig({ tts_voice_target: null });
 });
 
-nativeLangEl.addEventListener('change', () => updateConfig({ native_lang: nativeLangEl.value }));
+nativeLangEl.addEventListener('change', async () => {
+  const newNative = nativeLangEl.value;
+  // Swap if same as target
+  if (newNative === targetLangEl.value) {
+    targetLangEl.value = config.native_lang;
+    await updateConfig({ target_lang: config.native_lang });
+    filterVoices(config.native_lang);
+    voiceEl.value = '';
+    await updateConfig({ tts_voice_target: null });
+  }
+  await updateConfig({ native_lang: newNative });
+});
 
 voiceEl.addEventListener('change', () => {
   const val = voiceEl.value || null;

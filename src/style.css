@@ -312,6 +312,23 @@ html, body {
   border-color: rgba(255, 255, 255, 0.3);
 }
 
+.download-retry {
+  padding: 6px 16px;
+  border-radius: 6px;
+  border: 1px solid #5b9cf0;
+  background: rgba(91, 156, 240, 0.15);
+  color: #5b9cf0;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s;
+  margin-right: 8px;
+}
+
+.download-retry:hover {
+  background: rgba(91, 156, 240, 0.25);
+}
+
 .download-hint {
   font-size: 11px;
   color: rgba(255, 255, 255, 0.3);

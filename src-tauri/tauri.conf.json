@@ -33,7 +33,10 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
-    "resources": {"resources/espeak-ng/" : "resources/espeak-ng/"},
+    "resources": {
+      "resources/espeak-ng/": "resources/espeak-ng/",
+      "resources/dict/": "resources/dict/"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

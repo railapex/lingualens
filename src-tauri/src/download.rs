@@ -123,7 +123,15 @@ pub async fn download_models(
     }
 
     let overall_total: u64 = missing.iter().map(|m| m.size_bytes).sum();
-    let mut overall_downloaded: u64 = 0;
+
+    // Account for bytes already in .partial files (resume support)
+    let mut overall_downloaded: u64 = missing
+        .iter()
+        .map(|mf| {
+            let partial = models_dir.join(format!("{}.partial", mf.dest));
+            std::fs::metadata(&partial).map(|meta| meta.len()).unwrap_or(0)
+        })
+        .sum();
 
     let client = reqwest::Client::new();
 
@@ -227,6 +235,19 @@ pub async fn download_models(
 
         file.flush().await.map_err(|e| format!("Flush error: {e}"))?;
         drop(file);
+
+        // Validate downloaded size before accepting
+        let actual_size = tokio::fs::metadata(&partial)
+            .await
+            .map(|m| m.len())
+            .unwrap_or(0);
+        if actual_size != model.size_bytes {
+            let _ = tokio::fs::remove_file(&partial).await;
+            return Err(format!(
+                "{}: expected {} bytes, got {} — file removed, retry download",
+                model.name, model.size_bytes, actual_size
+            ));
+        }
 
         // Rename .partial to final path
         tokio::fs::rename(&partial, &dest)

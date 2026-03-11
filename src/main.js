@@ -348,6 +348,7 @@ const downloadBar = document.getElementById('download-bar');
 const downloadModelName = document.getElementById('download-model-name');
 const downloadStats = document.getElementById('download-stats');
 const downloadSkip = document.getElementById('download-skip');
+const downloadRetry = document.getElementById('download-retry');
 
 function formatBytes(bytes) {
   if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`;
@@ -369,16 +370,27 @@ async function checkAndDownloadModels() {
   await appWindow.setFocus();
 
   return new Promise((resolve) => {
+    let unlistenProgress = null;
+    let unlistenComplete = null;
+
+    function cleanup() {
+      if (unlistenProgress) unlistenProgress.then(fn => fn());
+      if (unlistenComplete) unlistenComplete.then(fn => fn());
+      unlistenProgress = null;
+      unlistenComplete = null;
+    }
+
     // Skip button — proceed without models
     downloadSkip.addEventListener('click', () => {
       invoke('cancel_download').catch(() => {});
+      cleanup();
       downloadView.style.display = 'none';
       appWindow.hide();
       resolve(false);
     }, { once: true });
 
     // Progress listener
-    const unlisten = listen('download-progress', (event) => {
+    unlistenProgress = listen('download-progress', (event) => {
       const p = event.payload;
       const pct = p.overall_bytes_total > 0
         ? ((p.overall_bytes_downloaded / p.overall_bytes_total) * 100)
@@ -389,23 +401,32 @@ async function checkAndDownloadModels() {
     });
 
     // Complete listener
-    const unlistenComplete = listen('download-complete', () => {
+    unlistenComplete = listen('download-complete', () => {
+      cleanup();
       downloadView.style.display = 'none';
       appWindow.hide();
-      unlisten.then(fn => fn());
-      unlistenComplete.then(fn => fn());
+      // Trigger model preloading now that files exist
+      invoke('preload_models').catch(() => {});
       resolve(true);
     });
 
-    // Start download
-    invoke('start_download').then(() => {
-      // download_complete event handles the resolve
-    }).catch((e) => {
-      console.warn('[lingualens] download error:', e);
-      downloadModelName.textContent = 'Download failed';
-      downloadStats.textContent = String(e);
-      // Don't auto-hide — let user click Skip
-    });
+    function startDownload() {
+      downloadModelName.textContent = 'Starting download...';
+      downloadBar.style.width = '0%';
+      downloadRetry.style.display = 'none';
+
+      invoke('start_download').catch((e) => {
+        console.warn('[lingualens] download error:', e);
+        downloadModelName.textContent = 'Download failed';
+        downloadStats.textContent = String(e);
+        downloadRetry.style.display = '';
+      });
+    }
+
+    // Retry button
+    downloadRetry.addEventListener('click', startDownload);
+
+    startDownload();
   });
 }
 
