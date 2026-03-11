@@ -14,6 +14,8 @@ pub mod tts;
 static ESPEAK_PATH: OnceLock<PathBuf> = OnceLock::new();
 /// Resolved espeak-ng data directory.
 static ESPEAK_DATA: OnceLock<PathBuf> = OnceLock::new();
+/// Resolved dictionary directory (bundled resource or app data fallback).
+static DICT_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 /// Get the espeak-ng executable path (bundled or system).
 pub fn espeak_exe() -> &'static PathBuf {
@@ -23,6 +25,11 @@ pub fn espeak_exe() -> &'static PathBuf {
 /// Get the espeak-ng data directory.
 pub fn espeak_data() -> &'static PathBuf {
     ESPEAK_DATA.get().expect("espeak data not initialized")
+}
+
+/// Get the resolved dictionary directory.
+pub fn dict_dir() -> &'static PathBuf {
+    DICT_DIR.get().expect("dict dir not initialized")
 }
 
 #[cfg(target_os = "windows")]
@@ -389,18 +396,18 @@ fn get_selected_text() -> Result<String, String> {
 
         // Tier 1: UI Automation (clipboard-free, ~80% of apps) — skip if force_clipboard
         if !config::get().force_clipboard {
-        if let Some(text) = get_selected_text_uia() {
-            let trimmed = text.trim().to_string();
-            if !trimmed.is_empty() {
-                log::info!(
-                    "[capture] UIA success ({} chars, {:.1}ms)",
-                    trimmed.len(),
-                    t0.elapsed().as_secs_f64() * 1000.0
-                );
-                return Ok(trimmed);
+            if let Some(text) = get_selected_text_uia() {
+                let trimmed = text.trim().to_string();
+                if !trimmed.is_empty() {
+                    log::info!(
+                        "[capture] UIA success ({} chars, {:.1}ms)",
+                        trimmed.len(),
+                        t0.elapsed().as_secs_f64() * 1000.0
+                    );
+                    return Ok(trimmed);
+                }
             }
         }
-        } // end force_clipboard check
 
         // Tier 2: Clipboard simulation with sequence-number polling
         log::info!(
@@ -868,6 +875,16 @@ fn cancel_download() {
     download::cancel();
 }
 
+/// Trigger model preloading (called by frontend after first-run download completes).
+#[tauri::command]
+fn preload_models(app_handle: tauri::AppHandle) {
+    let data_dir = app_handle.path().app_data_dir().unwrap_or_default();
+    std::thread::spawn(move || {
+        tts::preload(&data_dir);
+        translate::preload(&data_dir);
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -907,6 +924,24 @@ pub fn run() {
                 }
             }
 
+            // Resolve dictionary path: bundled resource → app data dir fallback
+            {
+                let resource_dir = app.path().resource_dir().unwrap_or_default();
+                let bundled_dict = resource_dir.join("resources/dict");
+                let appdata_dict = data_dir.join("models").join("dict");
+
+                if bundled_dict.join("es-en.tsv").exists() {
+                    log::info!("[dict] Using bundled: {}", bundled_dict.display());
+                    let _ = DICT_DIR.set(bundled_dict);
+                } else if appdata_dict.join("es-en.tsv").exists() {
+                    log::info!("[dict] Using app data: {}", appdata_dict.display());
+                    let _ = DICT_DIR.set(appdata_dict);
+                } else {
+                    log::warn!("[dict] No dictionary files found — single-word lookups unavailable");
+                    let _ = DICT_DIR.set(bundled_dict); // will load empty
+                }
+            }
+
             // Initialize history DB
             if let Err(e) = history::init(&data_dir) {
                 log::error!("[history] Init failed: {e}");
@@ -917,14 +952,24 @@ pub fn run() {
 
             // Preload models: dict + TTS in parallel (dict=CPU, TTS=CUDA),
             // then TranslateGemma after TTS finishes (both want CUDA).
+            // Skip TTS/translate preload if model files are missing (first-run
+            // downloads them later, then calls preload_models command).
             {
                 let data_dir = data_dir.clone();
                 std::thread::spawn(move || {
                     let dd = data_dir.clone();
                     let dict_thread = std::thread::spawn(move || dict::preload(&dd));
-                    tts::preload(&data_dir);
+
+                    let kokoro_dir = data_dir.join("models").join("kokoro");
+                    if kokoro_dir.join("model.onnx").exists() || kokoro_dir.join("model_quantized.onnx").exists() {
+                        tts::preload(&data_dir);
+                    }
+
                     let _ = dict_thread.join();
-                    translate::preload(&data_dir);
+
+                    if data_dir.join("models").join("translategemma-4b-it.Q4_K_M.gguf").exists() {
+                        translate::preload(&data_dir);
+                    }
                 });
             }
 
@@ -954,6 +999,7 @@ pub fn run() {
             check_models,
             start_download,
             cancel_download,
+            preload_models,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

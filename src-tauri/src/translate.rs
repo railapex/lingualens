@@ -61,7 +61,7 @@ fn ensure_loaded(data_dir: &Path) -> Result<(), String> {
     let model_path = data_dir.join("models").join(MODEL_FILENAME);
     if !model_path.exists() {
         return Err(format!(
-            "Model not found: {}. Run: node scripts/download-models.mjs",
+            "Model not found: {}. Restart the app to trigger download.",
             model_path.display()
         ));
     }
@@ -81,7 +81,10 @@ fn ensure_loaded(data_dir: &Path) -> Result<(), String> {
     let model = LlamaModel::load_from_file(&backend, &model_path, &model_params)
         .map_err(|e| format!("Model load failed: {e}"))?;
 
-    log::info!("TranslateGemma loaded (GPU offload enabled)");
+    log::info!(
+        "TranslateGemma loaded ({} GPU layers)",
+        if gpu_layers == 0 { "0 — CPU only" } else { "all" }
+    );
 
     let _ = STATE.set(Mutex::new(TranslateState { backend, model }));
     Ok(())

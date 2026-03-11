@@ -1,6 +1,6 @@
 // Spanish↔English dictionary — fast single-word lookup
 //
-// Loaded from models/dict/{es-en,en-es}.tsv at startup.
+// Bundled as Tauri resources in resources/dict/{es-en,en-es}.tsv.
 // Built by: node scripts/build-dictionary.mjs
 // Source: kaikki.org Wiktionary extracts (re-runnable pipeline)
 //
@@ -30,14 +30,14 @@ fn load_tsv(path: &Path) -> HashMap<String, String> {
     map
 }
 
-fn load(data_dir: &Path) -> Dict {
-    let dict_dir = data_dir.join("models").join("dict");
+fn load() -> Dict {
+    let dict_dir = crate::dict_dir();
 
     let es_en = load_tsv(&dict_dir.join("es-en.tsv"));
     let en_es = load_tsv(&dict_dir.join("en-es.tsv"));
 
     if es_en.is_empty() && en_es.is_empty() {
-        log::warn!("[dict] No dictionary files found. Run: node scripts/build-dictionary.mjs");
+        log::warn!("[dict] No dictionary entries loaded");
     } else {
         log::info!("[dict] Loaded {} es→en, {} en→es entries", es_en.len(), en_es.len());
     }
@@ -45,14 +45,16 @@ fn load(data_dir: &Path) -> Dict {
     Dict { es_en, en_es }
 }
 
-fn get_dict(data_dir: &Path) -> &'static Dict {
-    DICT.get_or_init(|| load(data_dir))
+fn get_dict() -> &'static Dict {
+    DICT.get_or_init(load)
 }
 
 /// Initialize dictionary eagerly (call from startup thread).
-pub fn preload(data_dir: &Path) {
+/// The `_data_dir` parameter is kept for API compatibility but the
+/// actual path comes from `crate::dict_dir()` (resolved at startup).
+pub fn preload(_data_dir: &Path) {
     let t0 = std::time::Instant::now();
-    let dict = get_dict(data_dir);
+    let dict = get_dict();
     log::info!(
         "[dict] Preloaded in {:.0?} ({} es→en, {} en→es)",
         t0.elapsed(),
@@ -63,13 +65,13 @@ pub fn preload(data_dir: &Path) {
 
 /// Try to translate short text using the dictionary.
 /// Returns Some for 1-2 word lookups, None otherwise (fall back to model).
-pub fn try_translate(text: &str, source_lang: &str, data_dir: &Path) -> Option<String> {
+pub fn try_translate(text: &str, source_lang: &str, _data_dir: &Path) -> Option<String> {
     let words: Vec<&str> = text.split_whitespace().collect();
     if words.is_empty() || words.len() > 2 {
         return None;
     }
 
-    let dict = get_dict(data_dir);
+    let dict = get_dict();
     let map = match source_lang {
         "es" => &dict.es_en,
         "en" => &dict.en_es,
@@ -113,8 +115,8 @@ pub fn try_translate(text: &str, source_lang: &str, data_dir: &Path) -> Option<S
 /// Detect if text is Spanish by checking dictionary membership.
 /// Words in BOTH dictionaries are ambiguous (loanwords) and don't count.
 /// Returns confidence: fraction of exclusively-Spanish words / total words.
-pub fn spanish_confidence(text: &str, data_dir: &Path) -> f32 {
-    let dict = get_dict(data_dir);
+pub fn spanish_confidence(text: &str, _data_dir: &Path) -> f32 {
+    let dict = get_dict();
 
     let words: Vec<String> = text
         .split_whitespace()
