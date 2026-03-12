@@ -1,6 +1,11 @@
 {
   "identifier": "com.lingualens.dev",
   "productName": "LinguaLens [DEV]",
+  "bundle": {
+    "resources": [
+      "resources/dict/"
+    ]
+  },
   "plugins": {
     "updater": {
       "endpoints": []

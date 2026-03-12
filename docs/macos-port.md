@@ -96,6 +96,7 @@ ort = { version = "2.0.0-rc.12", features = ["download-binaries"] }
 ```
 
 **CI builds**: `npx tauri build -- --features gpu-windows` on Windows, `npx tauri build -- --features gpu-macos` on macOS.
+**Local builds/dev**: use `npm run build` / `npm run dev` (these scripts auto-inject the platform GPU feature so Metal + ONNX/CoreML stay enabled).
 
 ---
 
