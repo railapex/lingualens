@@ -1,6 +1,10 @@
 # Changelog
 
-## v0.2.0 (unreleased)
+## v0.2.1 (unreleased)
+
+CI: cache Cargo registry/target, npm, and CUDA toolkit — cuts release builds from ~96min to ~15min.
+
+## v0.2.0
 
 OOB experience polish — smoother install-to-first-use journey.
 
