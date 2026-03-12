@@ -349,6 +349,23 @@ fn create_session(fp32_path: &Path, q8_path: &Path) -> Result<(Session, String),
         }
     }
 
+    // CoreML attempt (macOS)
+    #[cfg(target_os = "macos")]
+    if !crate::config::get().force_cpu && fp32_path.exists() {
+        let t0 = std::time::Instant::now();
+        match Session::builder()
+            .map_err(|e| e.to_string())
+            .and_then(|b| b.with_execution_providers([ort::ep::CoreML::default().build()]).map_err(|e| e.to_string()))
+            .and_then(|mut b| b.commit_from_file(fp32_path).map_err(|e| e.to_string()))
+        {
+            Ok(session) => {
+                log::info!("[tts] CoreML session created in {:.0?}", t0.elapsed());
+                return Ok((session, "coreml".into()));
+            }
+            Err(e) => log::warn!("[tts] CoreML failed ({:.0?}): {}", t0.elapsed(), e),
+        }
+    }
+
     // CPU fallback
     let t0 = std::time::Instant::now();
     let model_path = if q8_path.exists() { q8_path } else if fp32_path.exists() { fp32_path } else {
@@ -630,9 +647,15 @@ mod tests {
     use std::path::PathBuf;
 
     fn test_data_dir() -> PathBuf {
-        // Use the actual app data dir for tests
-        PathBuf::from(std::env::var("APPDATA").unwrap_or_else(|_| "C:/Users/chris/AppData/Roaming".into()))
-            .join("com.lingualens.app")
+        // Use the actual app data dir for tests — platform-aware
+        if cfg!(target_os = "windows") {
+            PathBuf::from(std::env::var("APPDATA").unwrap_or_else(|_| "C:/Users/chris/AppData/Roaming".into()))
+                .join("com.lingualens.app")
+        } else {
+            // macOS: ~/Library/Application Support/com.lingualens.app
+            PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/tmp".into()))
+                .join("Library/Application Support/com.lingualens.app")
+        }
     }
 
     fn kokoro_dir() -> PathBuf {

@@ -389,6 +389,178 @@ fn poll_clipboard_change(seq_before: u32, timeout_ms: u64) -> bool {
     }
 }
 
+// --- macOS text capture ---
+
+/// Get selected text via macOS Accessibility API (AXUIElement).
+/// Requires Accessibility permission in System Settings > Privacy & Security.
+#[cfg(target_os = "macos")]
+fn get_selected_text_accessibility() -> Option<String> {
+    use core_foundation::base::TCFType;
+    use core_foundation::string::CFString;
+
+    // Safety: Core Foundation Accessibility API calls.
+    // All returned CFTypeRefs follow the Copy rule — caller owns them.
+    // We wrap each in a CFType via wrap_under_create_rule so Rust drops = CFRelease.
+    unsafe {
+        // 1. System-wide accessibility element
+        let system = AXUIElementCreateSystemWide();
+        if system.is_null() {
+            return None;
+        }
+
+        // 2. Get focused application
+        let focused_app_attr = CFString::new("AXFocusedApplication");
+        let mut focused_app: core_foundation::base::CFTypeRef = std::ptr::null();
+        let err = AXUIElementCopyAttributeValue(
+            system,
+            focused_app_attr.as_concrete_TypeRef(),
+            &mut focused_app,
+        );
+        CFRelease(system as _);
+        if err != 0 || focused_app.is_null() {
+            return None;
+        }
+
+        // 3. Get focused UI element from that app
+        let focused_elem_attr = CFString::new("AXFocusedUIElement");
+        let mut focused_elem: core_foundation::base::CFTypeRef = std::ptr::null();
+        let err = AXUIElementCopyAttributeValue(
+            focused_app as AXUIElementRef,
+            focused_elem_attr.as_concrete_TypeRef(),
+            &mut focused_elem,
+        );
+        CFRelease(focused_app);
+        if err != 0 || focused_elem.is_null() {
+            return None;
+        }
+
+        // 4. Get selected text attribute
+        let selected_text_attr = CFString::new("AXSelectedText");
+        let mut selected_text: core_foundation::base::CFTypeRef = std::ptr::null();
+        let err = AXUIElementCopyAttributeValue(
+            focused_elem as AXUIElementRef,
+            selected_text_attr.as_concrete_TypeRef(),
+            &mut selected_text,
+        );
+        CFRelease(focused_elem);
+        if err != 0 || selected_text.is_null() {
+            return None;
+        }
+
+        // Convert CFStringRef to Rust String — Create rule: we own it, release on drop
+        let cf_str: CFString = CFString::wrap_under_create_rule(selected_text as _);
+        let result = cf_str.to_string();
+
+        if result.is_empty() {
+            None
+        } else {
+            Some(result)
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+type AXUIElementRef = *const std::ffi::c_void;
+
+#[cfg(target_os = "macos")]
+extern "C" {
+    fn AXUIElementCreateSystemWide() -> AXUIElementRef;
+    fn AXUIElementCopyAttributeValue(
+        element: AXUIElementRef,
+        attribute: core_foundation::string::CFStringRef,
+        value: *mut core_foundation::base::CFTypeRef,
+    ) -> i32;
+    fn CFRelease(cf: core_foundation::base::CFTypeRef);
+}
+
+/// Simulate Cmd+C on macOS via CGEvent keyboard events.
+#[cfg(target_os = "macos")]
+fn simulate_cmd_c() {
+    use core_graphics::event::{CGEvent, CGEventFlags, CGKeyCode};
+    use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+
+    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState);
+    let source = match source {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+
+    // Key code for 'C' is 8 on macOS
+    const KC_C: CGKeyCode = 8;
+
+    // Release all modifier keys first (user may still be holding the hotkey combo)
+    for keycode in [55u16, 56, 58, 59, 54, 60, 61, 62] {
+        // LCmd, LShift, LAlt, LCtrl, RCmd, RShift, RAlt, RCtrl
+        if let Ok(ev) = CGEvent::new_keyboard_event(source.clone(), keycode, false) {
+            ev.post(core_graphics::event::CGEventTapLocation::HID);
+        }
+    }
+
+    std::thread::sleep(std::time::Duration::from_millis(30));
+
+    // Cmd down + C down
+    if let Ok(ev) = CGEvent::new_keyboard_event(source.clone(), KC_C, true) {
+        ev.set_flags(CGEventFlags::CGEventFlagCommand);
+        ev.post(core_graphics::event::CGEventTapLocation::HID);
+    }
+    // Cmd up + C up
+    if let Ok(ev) = CGEvent::new_keyboard_event(source.clone(), KC_C, false) {
+        ev.set_flags(CGEventFlags::CGEventFlagCommand);
+        ev.post(core_graphics::event::CGEventTapLocation::HID);
+    }
+}
+
+/// Read text from macOS pasteboard.
+#[cfg(target_os = "macos")]
+fn read_pasteboard_text() -> Option<String> {
+    use std::process::Command;
+    // Use pbpaste for simplicity — avoids raw Objective-C FFI for NSPasteboard
+    let output = Command::new("pbpaste").output().ok()?;
+    if output.status.success() {
+        let text = String::from_utf8_lossy(&output.stdout).to_string();
+        if text.is_empty() { None } else { Some(text) }
+    } else {
+        None
+    }
+}
+
+/// Save current pasteboard text content (for restore after capture).
+#[cfg(target_os = "macos")]
+fn save_pasteboard_text() -> Option<String> {
+    read_pasteboard_text()
+}
+
+/// Clear and restore pasteboard text.
+#[cfg(target_os = "macos")]
+fn restore_pasteboard_text(saved: Option<String>) {
+    use std::process::Command;
+    match saved {
+        Some(text) => {
+            // Pipe saved text back into pbcopy
+            use std::io::Write;
+            if let Ok(mut child) = Command::new("pbcopy")
+                .stdin(std::process::Stdio::piped())
+                .spawn()
+            {
+                if let Some(mut stdin) = child.stdin.take() {
+                    let _ = stdin.write_all(text.as_bytes());
+                }
+                let _ = child.wait();
+            }
+        }
+        None => {
+            // Clear clipboard
+            let _ = Command::new("pbcopy")
+                .stdin(std::process::Stdio::piped())
+                .spawn()
+                .and_then(|mut c| {
+                    drop(c.stdin.take());
+                    c.wait()
+                });
+        }
+    }
+}
+
 /// Two-tier text capture: UIA TextPattern first, clipboard simulation fallback.
 #[tauri::command]
 fn get_selected_text() -> Result<String, String> {
@@ -451,7 +623,56 @@ fn get_selected_text() -> Result<String, String> {
 
         Ok(captured)
     }
-    #[cfg(not(target_os = "windows"))]
+
+    #[cfg(target_os = "macos")]
+    {
+        let t0 = std::time::Instant::now();
+
+        // Tier 1: Accessibility API (clipboard-free) — skip if force_clipboard
+        if !config::get().force_clipboard {
+            if let Some(text) = get_selected_text_accessibility() {
+                let trimmed = text.trim().to_string();
+                if !trimmed.is_empty() {
+                    log::info!(
+                        "[capture] Accessibility success ({} chars, {:.1}ms)",
+                        trimmed.len(),
+                        t0.elapsed().as_secs_f64() * 1000.0
+                    );
+                    return Ok(trimmed);
+                }
+            }
+        }
+
+        // Tier 2: Clipboard simulation with Cmd+C
+        log::info!(
+            "[capture] Accessibility miss ({:.1}ms), falling back to clipboard",
+            t0.elapsed().as_secs_f64() * 1000.0
+        );
+
+        let saved = save_pasteboard_text();
+
+        // Clear pasteboard then simulate Cmd+C
+        restore_pasteboard_text(None);
+        simulate_cmd_c();
+
+        // Give the target app time to respond to Cmd+C
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        let captured = read_pasteboard_text().unwrap_or_default();
+
+        // Restore original pasteboard contents
+        restore_pasteboard_text(saved);
+
+        log::info!(
+            "[capture] clipboard ({} chars, {:.1}ms)",
+            captured.len(),
+            t0.elapsed().as_secs_f64() * 1000.0,
+        );
+
+        Ok(captured)
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         Err("Not implemented on this platform".into())
     }
@@ -487,7 +708,30 @@ fn get_active_monitor_center() -> Result<[i32; 4], String> {
     }
 }
 
-#[cfg(not(target_os = "windows"))]
+/// Get the center of the primary monitor on macOS.
+/// Uses the main screen (where the frontmost app is) via NSScreen API.
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn get_active_monitor_center() -> Result<[i32; 4], String> {
+    // Primary display via CGDisplay — always the screen with the menu bar.
+    // Multi-monitor: this picks the primary, not necessarily the one with focused app.
+    // Good enough for single-monitor; revisit with NSScreen.mainScreen if needed.
+    unsafe {
+        let display = CGMainDisplayID();
+        let w = CGDisplayPixelsWide(display) as i32;
+        let h = CGDisplayPixelsHigh(display) as i32;
+        Ok([w / 2, h / 2, w, h])
+    }
+}
+
+#[cfg(target_os = "macos")]
+extern "C" {
+    fn CGMainDisplayID() -> u32;
+    fn CGDisplayPixelsWide(display: u32) -> usize;
+    fn CGDisplayPixelsHigh(display: u32) -> usize;
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 #[tauri::command]
 fn get_active_monitor_center() -> Result<[i32; 4], String> {
     Err("Not implemented on this platform".into())
@@ -590,8 +834,8 @@ fn set_config(
         if let Some(v) = updates.get("force_clipboard").and_then(|v| v.as_bool()) {
             cfg.force_clipboard = v;
         }
-        if let Some(v) = updates.get("start_with_windows").and_then(|v| v.as_bool()) {
-            cfg.start_with_windows = v;
+        if let Some(v) = updates.get("start_at_login").and_then(|v| v.as_bool()) {
+            cfg.start_at_login = v;
         }
     })?;
 
@@ -599,43 +843,71 @@ fn set_config(
     Ok(updated)
 }
 
-// --- OS audio playback (PlaySound FFI) ---
-// Plays WAV in Rust via Windows API — no binary data over IPC.
+// --- Cross-platform audio playback via rodio ---
+// OutputStream is !Send+!Sync (cpal platform stream), so we run playback
+// on a dedicated thread and communicate via channel.
 
-#[cfg(target_os = "windows")]
 mod audio {
-    const SND_MEMORY: u32 = 0x0004;
-    const SND_ASYNC: u32 = 0x0001;
-    const SND_NODEFAULT: u32 = 0x0002;
+    use std::io::Cursor;
+    use std::sync::{mpsc, Mutex, OnceLock};
 
-    #[link(name = "winmm")]
-    extern "system" {
-        fn PlaySoundW(pszSound: *const u8, hmod: *mut std::ffi::c_void, fdwSound: u32) -> i32;
+    enum AudioMsg {
+        Play(Vec<u8>),
+        Stop,
     }
 
-    /// Static buffer keeps WAV alive during async playback.
-    static WAV_BUFFER: std::sync::Mutex<Vec<u8>> = std::sync::Mutex::new(Vec::new());
+    static SENDER: OnceLock<Mutex<mpsc::Sender<AudioMsg>>> = OnceLock::new();
+
+    fn get_sender() -> &'static Mutex<mpsc::Sender<AudioMsg>> {
+        SENDER.get_or_init(|| {
+            let (tx, rx) = mpsc::channel::<AudioMsg>();
+            std::thread::spawn(move || {
+                use rodio::{Decoder, OutputStream, Sink};
+
+                let (stream, handle) = match OutputStream::try_default() {
+                    Ok(pair) => pair,
+                    Err(e) => {
+                        log::error!("[audio] Failed to open output device: {e}");
+                        return;
+                    }
+                };
+                let sink = Sink::try_new(&handle).unwrap();
+
+                for msg in rx {
+                    match msg {
+                        AudioMsg::Play(wav_bytes) => {
+                            sink.stop();
+                            match Decoder::new(Cursor::new(wav_bytes)) {
+                                Ok(source) => sink.append(source),
+                                Err(e) => log::warn!("[audio] Failed to decode WAV: {e}"),
+                            }
+                        }
+                        AudioMsg::Stop => {
+                            sink.stop();
+                        }
+                    }
+                }
+
+                // Keep stream alive until channel closes
+                drop(stream);
+            });
+            Mutex::new(tx)
+        })
+    }
 
     pub fn play(wav_bytes: Vec<u8>) {
-        let mut guard = WAV_BUFFER.lock().unwrap();
-        // Stop any current playback before replacing buffer
-        unsafe { PlaySoundW(std::ptr::null(), std::ptr::null_mut(), SND_ASYNC); }
-        *guard = wav_bytes;
-        let ptr = guard.as_ptr();
-        unsafe {
-            PlaySoundW(ptr, std::ptr::null_mut(), SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
+        if let Ok(tx) = get_sender().lock() {
+            let _ = tx.send(AudioMsg::Play(wav_bytes));
         }
     }
 
     pub fn stop() {
-        unsafe { PlaySoundW(std::ptr::null(), std::ptr::null_mut(), SND_ASYNC); }
+        if let Some(sender) = SENDER.get() {
+            if let Ok(tx) = sender.lock() {
+                let _ = tx.send(AudioMsg::Stop);
+            }
+        }
     }
-}
-
-#[cfg(not(target_os = "windows"))]
-mod audio {
-    pub fn play(_wav_bytes: Vec<u8>) {}
-    pub fn stop() {}
 }
 
 #[tauri::command]
@@ -1048,7 +1320,7 @@ pub fn run() {
             {
                 use tauri_plugin_autostart::ManagerExt;
                 let autostart = app.autolaunch();
-                if config::get().start_with_windows {
+                if config::get().start_at_login {
                     let _ = autostart.enable();
                 } else {
                     let _ = autostart.disable();
@@ -1058,10 +1330,37 @@ pub fn run() {
             // Resolve espeak-ng path: bundled resource → system fallback
             {
                 let resource_dir = app.path().resource_dir().unwrap_or_default();
-                let bundled_exe = resource_dir.join("resources/espeak-ng/espeak-ng.exe");
-                let bundled_data = resource_dir.join("resources/espeak-ng/espeak-ng-data");
-                let system_exe = PathBuf::from("C:/Program Files/eSpeak NG/espeak-ng.exe");
-                let system_data = PathBuf::from("C:/Program Files/eSpeak NG/espeak-ng-data");
+
+                #[cfg(target_os = "windows")]
+                let (bundled_exe, bundled_data, system_exe, system_data) = (
+                    resource_dir.join("resources/espeak-ng/espeak-ng.exe"),
+                    resource_dir.join("resources/espeak-ng/espeak-ng-data"),
+                    PathBuf::from("C:/Program Files/eSpeak NG/espeak-ng.exe"),
+                    PathBuf::from("C:/Program Files/eSpeak NG/espeak-ng-data"),
+                );
+
+                #[cfg(target_os = "macos")]
+                let (bundled_exe, bundled_data, system_exe, system_data) = {
+                    let homebrew = if cfg!(target_arch = "aarch64") {
+                        PathBuf::from("/opt/homebrew")
+                    } else {
+                        PathBuf::from("/usr/local")
+                    };
+                    (
+                        resource_dir.join("resources/espeak-ng/espeak-ng"),
+                        resource_dir.join("resources/espeak-ng/espeak-ng-data"),
+                        homebrew.join("bin/espeak-ng"),
+                        homebrew.join("share/espeak-ng-data"),
+                    )
+                };
+
+                #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+                let (bundled_exe, bundled_data, system_exe, system_data) = (
+                    resource_dir.join("resources/espeak-ng/espeak-ng"),
+                    resource_dir.join("resources/espeak-ng/espeak-ng-data"),
+                    PathBuf::from("/usr/bin/espeak-ng"),
+                    PathBuf::from("/usr/share/espeak-ng-data"),
+                );
 
                 if bundled_exe.exists() {
                     log::info!("[espeak] Using bundled: {}", bundled_exe.display());

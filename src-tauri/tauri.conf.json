@@ -32,7 +32,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": "all",
     "resources": {
       "resources/espeak-ng/": "resources/espeak-ng/",
       "resources/dict/": "resources/dict/"
@@ -49,6 +49,9 @@
         "installMode": "currentUser",
         "displayLanguageSelector": false
       }
+    },
+    "macOS": {
+      "minimumSystemVersion": "12.0"
     }
   },
   "plugins": {

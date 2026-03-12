@@ -1,5 +1,35 @@
 # Changelog
 
+## v0.3.0 (unreleased)
+
+macOS port — cross-platform scaffolding for Apple Silicon + Intel.
+
+### Added
+
+- **macOS text capture** — two-tier: Accessibility API (AXUIElement, clipboard-free) → Cmd+C simulation via CGEvent with pasteboard save/restore
+- **macOS monitor detection** — CGDisplay API for overlay positioning
+- **macOS espeak-ng paths** — Homebrew ARM (`/opt/homebrew`) and Intel (`/usr/local`) fallback
+- **CoreML TTS** — added to GPU cascade: CUDA → DirectML → CoreML → CPU
+- **Metal translation** — `llama-cpp-2/metal` feature flag, same `with_n_gpu_layers(999)` API as CUDA
+- **Cargo feature flags** — `gpu-windows` (CUDA + DirectML) and `gpu-macos` (Metal + CoreML), base deps are GPU-agnostic
+- **CI matrix build** — Windows + macOS runners, per-platform manifest generation with merge job
+- **DMG bundle target** — `"targets": "all"` in tauri.conf.json, `macOS.minimumSystemVersion: "12.0"`
+- **Info.plist** — `NSAccessibilityUsageDescription` for Accessibility permission prompt
+- **On-platform validation plan** — `docs/plan-macos-onplatform.md` for Mac-side testing and completion
+
+### Changed
+
+- **Audio playback** — replaced Windows-only `winmm PlaySoundW` with cross-platform `rodio` crate (dedicated audio thread, channel-based architecture)
+- **Config field rename** — `start_with_windows` → `start_at_login` with `#[serde(alias)]` for migration
+- **Settings UI** — "Start with Windows" → "Start at login"
+- **Dev tooling** — `vite.config.js` and `scripts/download-models.mjs` now platform-aware (binary extensions, model paths)
+- **Test data dirs** — `tts.rs`, `translate.rs`, `tts_cli.rs` test helpers resolve to `~/Library/Application Support/` on macOS
+
+### Dependencies
+
+- Added: `rodio 0.19`, `core-graphics 0.24` (macOS), `core-foundation 0.10` (macOS)
+- Removed from base: `llama-cpp-2/cuda`, `ort/cuda`, `ort/directml` (moved to `gpu-windows` feature)
+
 ## v0.2.1 (unreleased)
 
 CI: cache Cargo registry/target, npm, and CUDA toolkit — cuts release builds from ~96min to ~15min.

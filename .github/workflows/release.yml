@@ -6,20 +6,34 @@ on:
 
 jobs:
   build:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            features: gpu-windows
+            tauri-args: ""
+          - os: macos-latest
+            features: gpu-macos
+            tauri-args: --target universal-apple-darwin
+    runs-on: ${{ matrix.os }}
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.os == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
 
-      - uses: Jimver/cuda-toolkit@v0.2.23
+      # Windows-only: CUDA toolkit
+      - if: matrix.os == 'windows-latest'
+        uses: Jimver/cuda-toolkit@v0.2.23
         with:
           cuda: '12.6.0'
           method: 'network'
@@ -32,9 +46,16 @@ jobs:
           workspaces: src-tauri
           cache-on-failure: true
 
-      - name: Install espeak-ng
+      # Windows: install espeak-ng via choco
+      - if: matrix.os == 'windows-latest'
+        name: Install espeak-ng (Windows)
         shell: pwsh
         run: choco install espeak-ng -y --no-progress
+
+      # macOS: install espeak-ng via brew
+      - if: matrix.os == 'macos-latest'
+        name: Install espeak-ng (macOS)
+        run: brew install espeak-ng
 
       - name: Install frontend dependencies
         run: npm ci
@@ -43,15 +64,34 @@ jobs:
         shell: bash
         run: |
           mkdir -p src-tauri/resources/espeak-ng
-          ESPEAK_DIR="C:/Program Files/eSpeak NG"
-          cp "$ESPEAK_DIR/espeak-ng.exe" src-tauri/resources/espeak-ng/
-          cp "$ESPEAK_DIR/libespeak-ng.dll" src-tauri/resources/espeak-ng/
-          cp -r "$ESPEAK_DIR/espeak-ng-data" src-tauri/resources/espeak-ng/
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            ESPEAK_DIR="C:/Program Files/eSpeak NG"
+            cp "$ESPEAK_DIR/espeak-ng.exe" src-tauri/resources/espeak-ng/
+            cp "$ESPEAK_DIR/libespeak-ng.dll" src-tauri/resources/espeak-ng/
+            cp -r "$ESPEAK_DIR/espeak-ng-data" src-tauri/resources/espeak-ng/
+          else
+            # macOS — Homebrew installs to /opt/homebrew (ARM) or /usr/local (Intel)
+            if [[ -f /opt/homebrew/bin/espeak-ng ]]; then
+              ESPEAK_BIN=/opt/homebrew/bin/espeak-ng
+              ESPEAK_DATA=/opt/homebrew/share/espeak-ng-data
+            else
+              ESPEAK_BIN=/usr/local/bin/espeak-ng
+              ESPEAK_DATA=/usr/local/share/espeak-ng-data
+            fi
+            cp "$ESPEAK_BIN" src-tauri/resources/espeak-ng/
+            cp -r "$ESPEAK_DATA" src-tauri/resources/espeak-ng/
+          fi
 
       - name: Build Tauri app
-        run: npx tauri build
+        shell: bash
+        run: |
+          if [[ -n "${{ matrix.tauri-args }}" ]]; then
+            npx tauri build ${{ matrix.tauri-args }} -- --features ${{ matrix.features }}
+          else
+            npx tauri build -- --features ${{ matrix.features }}
+          fi
         env:
-          CUDAFLAGS: "--allow-unsupported-compiler"
+          CUDAFLAGS: ${{ matrix.os == 'windows-latest' && '--allow-unsupported-compiler' || '' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
@@ -59,18 +99,31 @@ jobs:
         shell: bash
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          NSIS_ZIP=$(find src-tauri/target/release/bundle/nsis -name '*.nsis.zip' | head -1)
-          SIGNATURE=$(cat "${NSIS_ZIP}.sig")
-          FILENAME=$(basename "$NSIS_ZIP")
           TAG="${GITHUB_REF_NAME}"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            ARTIFACT=$(find src-tauri/target/release/bundle/nsis -name '*.nsis.zip' | head -1)
+            PLATFORM="windows-x86_64"
+          else
+            ARTIFACT=$(find src-tauri/target/universal-apple-darwin/release/bundle/dmg -name '*.dmg' | head -1)
+            PLATFORM="darwin-universal"
+          fi
+          SIGNATURE=$(cat "${ARTIFACT}.sig" 2>/dev/null || echo "unsigned")
+          FILENAME=$(basename "$ARTIFACT")
           jq --null-input \
             --arg version "$VERSION" \
             --arg notes "See https://github.com/railapex/lingualens/releases/tag/$TAG" \
             --arg pub_date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --arg sig "$SIGNATURE" \
             --arg url "https://github.com/railapex/lingualens/releases/download/$TAG/$FILENAME" \
-            '{version: $version, notes: $notes, pub_date: $pub_date, platforms: {"windows-x86_64": {signature: $sig, url: $url}}}' \
-            > latest.json
+            --arg platform "$PLATFORM" \
+            '{version: $version, notes: $notes, pub_date: $pub_date, platforms: {($platform): {signature: $sig, url: $url}}}' \
+            > "latest-$PLATFORM.json"
+
+      - name: Upload platform manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: manifest-${{ matrix.os }}
+          path: latest-*.json
 
       - name: Upload release artifacts
         uses: softprops/action-gh-release@v2
@@ -78,5 +131,36 @@ jobs:
           files: |
             src-tauri/target/release/bundle/nsis/*.exe
             src-tauri/target/release/bundle/nsis/*.nsis.zip
-            latest.json
+            src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
           generate_release_notes: true
+
+  # Merge per-platform manifests into single latest.json
+  merge-manifest:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all manifests
+        uses: actions/download-artifact@v4
+        with:
+          pattern: manifest-*
+          merge-multiple: true
+
+      - name: Merge into latest.json
+        run: |
+          # Merge all platform manifests into a single latest.json
+          jq -s '
+            {
+              version: .[0].version,
+              notes: .[0].notes,
+              pub_date: .[0].pub_date,
+              platforms: (reduce .[] as $item ({}; . * $item.platforms))
+            }
+          ' latest-*.json > latest.json
+          cat latest.json
+
+      - name: Upload merged manifest to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: latest.json

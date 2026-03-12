@@ -26,7 +26,7 @@ const forceCpuEl = document.getElementById('force-cpu');
 const forceWebSpeechEl = document.getElementById('force-web-speech');
 const forceDictOnlyEl = document.getElementById('force-dict-only');
 const forceClipboardEl = document.getElementById('force-clipboard');
-const startWithWindowsEl = document.getElementById('start-with-windows');
+const startAtLoginEl = document.getElementById('start-at-login');
 
 const hotkeyDisplay = document.getElementById('hotkey-display');
 const hotkeyChangeBtn = document.getElementById('hotkey-change');
@@ -100,7 +100,7 @@ function populateControls() {
   hotkeyDisplay.textContent = formatHotkey(config.hotkey || 'ctrl+alt+l');
 
   // Startup
-  startWithWindowsEl.checked = config.start_with_windows || false;
+  startAtLoginEl.checked = config.start_at_login || false;
 
   // Dev switches
   forceCpuEl.checked = config.force_cpu || false;
@@ -212,14 +212,14 @@ forceClipboardEl.addEventListener('change', () => updateConfig({ force_clipboard
 
 // --- Autostart ---
 
-startWithWindowsEl.addEventListener('change', async () => {
-  const enabled = startWithWindowsEl.checked;
+startAtLoginEl.addEventListener('change', async () => {
+  const enabled = startAtLoginEl.checked;
   try {
     if (enabled) await enableAutostart(); else await disableAutostart();
-    await updateConfig({ start_with_windows: enabled });
+    await updateConfig({ start_at_login: enabled });
   } catch (e) {
     console.warn('Autostart toggle failed:', e);
-    startWithWindowsEl.checked = !enabled; // revert
+    startAtLoginEl.checked = !enabled; // revert
   }
 });
 

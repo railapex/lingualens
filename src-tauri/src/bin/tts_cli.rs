@@ -19,8 +19,13 @@ fn main() {
     let lang = &args[2];
     let voice = args.get(3).map(|s| s.as_str());
 
-    let data_dir = PathBuf::from(std::env::var("APPDATA").unwrap_or_else(|_| "C:/Users/chris/AppData/Roaming".into()))
-        .join("com.lingualens.app");
+    let data_dir = if cfg!(target_os = "windows") {
+        PathBuf::from(std::env::var("APPDATA").unwrap_or_else(|_| "C:/Users/chris/AppData/Roaming".into()))
+            .join("com.lingualens.app")
+    } else {
+        PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/tmp".into()))
+            .join("Library/Application Support/com.lingualens.app")
+    };
 
     match tts::speak(text, lang, voice, None, &data_dir) {
         Ok(wav) => {

@@ -12,7 +12,9 @@ import { homedir } from 'os';
 
 const MODELS_DIR =
   process.env.LINGUALENS_MODEL_DIR ||
-  join(homedir(), 'AppData/Roaming/com.lingualens.app/models');
+  (process.platform === 'win32'
+    ? join(homedir(), 'AppData/Roaming/com.lingualens.app/models')
+    : join(homedir(), 'Library/Application Support/com.lingualens.app/models'));
 
 const DOWNLOADS = [
   {

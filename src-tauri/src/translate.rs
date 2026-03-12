@@ -265,8 +265,13 @@ mod tests {
     use std::path::PathBuf;
 
     fn model_dir() -> PathBuf {
-        let appdata = std::env::var("APPDATA").expect("APPDATA not set");
-        PathBuf::from(appdata).join("com.lingualens.app")
+        if cfg!(target_os = "windows") {
+            let appdata = std::env::var("APPDATA").expect("APPDATA not set");
+            PathBuf::from(appdata).join("com.lingualens.app")
+        } else {
+            PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/tmp".into()))
+                .join("Library/Application Support/com.lingualens.app")
+        }
     }
 
     fn require_model() -> bool {
