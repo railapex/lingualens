@@ -21,6 +21,7 @@ const themeEl = document.getElementById('theme');
 const showIpaEl = document.getElementById('show-ipa');
 const dismissDelayEl = document.getElementById('dismiss-delay');
 const dismissDelayVal = document.getElementById('dismiss-delay-val');
+const overlayPositionModeEl = document.getElementById('overlay-position-mode');
 
 const forceCpuEl = document.getElementById('force-cpu');
 const forceWebSpeechEl = document.getElementById('force-web-speech');
@@ -97,6 +98,7 @@ function populateControls() {
   showIpaEl.checked = config.show_ipa !== false;
   dismissDelayEl.value = config.dismiss_delay_ms ?? 2000;
   dismissDelayVal.textContent = `${(parseInt(dismissDelayEl.value) / 1000).toFixed(1)}s`;
+  overlayPositionModeEl.value = config.overlay_position_mode || 'cursor';
   hotkeyDisplay.textContent = formatHotkey(config.hotkey || 'ctrl+alt+l');
 
   // Startup
@@ -201,6 +203,10 @@ dismissDelayEl.addEventListener('input', () => {
 });
 dismissDelayEl.addEventListener('change', () => {
   updateConfig({ dismiss_delay_ms: parseInt(dismissDelayEl.value) });
+});
+
+overlayPositionModeEl.addEventListener('change', () => {
+  updateConfig({ overlay_position_mode: overlayPositionModeEl.value });
 });
 
 // --- Dev switches ---

@@ -974,6 +974,13 @@ fn set_config(
         if let Some(v) = updates.get("force_clipboard").and_then(|v| v.as_bool()) {
             cfg.force_clipboard = v;
         }
+        if let Some(v) = updates.get("overlay_position_mode").and_then(|v| v.as_str()) {
+            cfg.overlay_position_mode = if v.eq_ignore_ascii_case("center") {
+                "center".to_string()
+            } else {
+                "cursor".to_string()
+            };
+        }
         if let Some(v) = updates.get("start_at_login").and_then(|v| v.as_bool()) {
             cfg.start_at_login = v;
         }
@@ -1367,14 +1374,21 @@ fn register_hotkey(app_handle: &tauri::AppHandle, shortcut: &str) -> Result<(), 
             // Move ALL work off the main thread to prevent "Not Responding".
             // Text capture (UIA/clipboard, up to 550ms) must not block the message pump.
             std::thread::spawn(move || {
+                let runtime_cfg = config::get();
+                let center_overlay = runtime_cfg.overlay_position_mode.eq_ignore_ascii_case("center");
+
                 #[cfg(target_os = "macos")]
-                let selection_bounds = if !config::get().force_clipboard {
+                let selection_bounds = if !center_overlay && !runtime_cfg.force_clipboard {
                     get_selected_text_bounds_accessibility()
                 } else {
                     None
                 };
                 #[cfg(target_os = "macos")]
-                let cursor_pos = get_cursor_position_macos();
+                let cursor_pos = if center_overlay {
+                    None
+                } else {
+                    get_cursor_position_macos()
+                };
 
                 let text = get_selected_text().unwrap_or_default();
                 let text = text.trim().to_string();
@@ -1400,7 +1414,9 @@ fn register_hotkey(app_handle: &tauri::AppHandle, shortcut: &str) -> Result<(), 
 
                         #[cfg(target_os = "macos")]
                         {
-                            if let Some(bounds) = selection_bounds {
+                            if center_overlay {
+                                log::info!("[hotkey] overlay_position_mode=center");
+                            } else if let Some(bounds) = selection_bounds {
                                 log::info!("[hotkey] AX selection bounds: {:?}", bounds);
                                 desired_position =
                                     compute_overlay_window_position_for_selection(bounds, None, logical_size);
