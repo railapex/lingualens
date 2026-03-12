@@ -1,6 +1,6 @@
 [package]
 name = "lingualens"
-version = "0.1.0"
+version = "0.2.0"
 description = "Ambient language learning overlay"
 authors = ["Chris Hynes"]
 license = "MIT"
@@ -22,6 +22,8 @@ log = "0.4"
 tauri = { version = "2.10.3", features = ["tray-icon"] }
 tauri-plugin-log = "2"
 tauri-plugin-global-shortcut = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-autostart = "2"
 llama-cpp-2 = { version = "0.1", features = ["cuda"] }
 # CUDA 13.1 + VS 2026: requires CUDAFLAGS="--allow-unsupported-compiler" at build time
 encoding_rs = "0.8"

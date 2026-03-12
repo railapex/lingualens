@@ -8,6 +8,8 @@ use std::collections::HashMap;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::process::Command as StdCommand;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use std::sync::OnceLock;
 
 use hound::{SampleFormat, WavSpec, WavWriter};
@@ -172,10 +174,12 @@ fn get_style_vector(voice_data: &[f32], token_count: usize) -> Vec<f32> {
 
 pub fn phonemize(text: &str, lang: &str) -> Result<String, String> {
     let espeak = espeak_lang(lang);
-    let output = StdCommand::new(crate::espeak_exe())
-        .env("ESPEAK_DATA_PATH", crate::espeak_data())
-        .args(["-v", espeak, "--ipa", "-q", text])
-        .output()
+    let mut cmd = StdCommand::new(crate::espeak_exe());
+    cmd.env("ESPEAK_DATA_PATH", crate::espeak_data())
+       .args(["-v", espeak, "--ipa", "-q", text]);
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    let output = cmd.output()
         .map_err(|e| format!("Failed to run espeak-ng: {e}"))?;
 
     if output.status.success() {
@@ -315,43 +319,45 @@ fn init_state(data_dir: &Path) -> Result<std::sync::Mutex<TtsState>, String> {
 }
 
 fn create_session(fp32_path: &Path, q8_path: &Path) -> Result<(Session, String), String> {
-    // Try GPU backends (skip if force_cpu)
     if !crate::config::get().force_cpu && fp32_path.exists() {
-        if let Ok(session) = Session::builder()
+        // CUDA attempt
+        let t0 = std::time::Instant::now();
+        match Session::builder()
             .map_err(|e| e.to_string())
-            .and_then(|b| {
-                b.with_execution_providers([ort::ep::CUDA::default().build()])
-                    .map_err(|e| e.to_string())
-            })
+            .and_then(|b| b.with_execution_providers([ort::ep::CUDA::default().build()]).map_err(|e| e.to_string()))
             .and_then(|mut b| b.commit_from_file(fp32_path).map_err(|e| e.to_string()))
         {
-            return Ok((session, "cuda".into()));
+            Ok(session) => {
+                log::info!("[tts] CUDA session created in {:.0?}", t0.elapsed());
+                return Ok((session, "cuda".into()));
+            }
+            Err(e) => log::warn!("[tts] CUDA failed ({:.0?}): {}", t0.elapsed(), e),
         }
-        log::info!("CUDA not available, trying DirectML...");
 
-        // Try DirectML with fp32 model
-        if let Ok(session) = Session::builder()
+        // DirectML attempt
+        let t0 = std::time::Instant::now();
+        match Session::builder()
             .map_err(|e| e.to_string())
-            .and_then(|b| {
-                b.with_execution_providers([ort::ep::DirectML::default().build()])
-                    .map_err(|e| e.to_string())
-            })
+            .and_then(|b| b.with_execution_providers([ort::ep::DirectML::default().build()]).map_err(|e| e.to_string()))
             .and_then(|mut b| b.commit_from_file(fp32_path).map_err(|e| e.to_string()))
         {
-            return Ok((session, "directml".into()));
+            Ok(session) => {
+                log::info!("[tts] DirectML session created in {:.0?}", t0.elapsed());
+                return Ok((session, "directml".into()));
+            }
+            Err(e) => log::warn!("[tts] DirectML failed ({:.0?}): {}", t0.elapsed(), e),
         }
-        log::info!("DirectML not available, falling back to CPU...");
     }
 
-    // CPU with q8 model (or fp32 if q8 not available)
+    // CPU fallback
+    let t0 = std::time::Instant::now();
     let model_path = if q8_path.exists() { q8_path } else if fp32_path.exists() { fp32_path } else {
         return Err("No Kokoro model file found. Download model.onnx or model_quantized.onnx.".into());
     };
-
     let session = Session::builder()
-        .map_err(|e| format!("Failed to create ONNX session builder: {e}"))
-        .and_then(|mut b| b.commit_from_file(model_path).map_err(|e| format!("Failed to load Kokoro model: {e}")))?;
-
+        .map_err(|e| format!("ONNX session builder: {e}"))
+        .and_then(|mut b| b.commit_from_file(model_path).map_err(|e| format!("Kokoro load: {e}")))?;
+    log::info!("[tts] CPU session in {:.0?} ({})", t0.elapsed(), model_path.display());
     Ok((session, "cpu".into()))
 }
 
@@ -379,6 +385,36 @@ fn ensure_voice_loaded(
     Ok(())
 }
 
+/// Run a minimal inference to trigger GPU kernel compilation.
+/// This takes 3-10 seconds on first call (CUDA JIT) but makes subsequent
+/// inferences near-instant.
+fn warmup_inference(state: &mut TtsState) -> Result<(), String> {
+    let voice_data = state.voices.values().next()
+        .ok_or("No voices loaded for warmup")?;
+
+    // Minimal token sequence: BOS + one phoneme + EOS
+    let tokens = vec![0i64, 1, 0];
+    let style = get_style_vector(voice_data, tokens.len());
+
+    let input_ids = Tensor::from_array(([1, tokens.len() as i64], tokens))
+        .map_err(|e| format!("warmup tensor: {e}"))?;
+    let style_tensor = Tensor::from_array(([1i64, VECTOR_DIM as i64], style))
+        .map_err(|e| format!("warmup style: {e}"))?;
+    let speed_tensor = Tensor::from_array(([1i64], vec![1.0f32]))
+        .map_err(|e| format!("warmup speed: {e}"))?;
+
+    let inputs = ort::inputs![
+        "input_ids" => input_ids,
+        "style" => style_tensor,
+        "speed" => speed_tensor,
+    ];
+
+    let _ = state.session.run(inputs)
+        .map_err(|e| format!("warmup inference: {e}"))?;
+
+    Ok(())
+}
+
 // --- Public API ---
 
 /// Pre-initialize ONNX session + voices for configured languages.
@@ -399,6 +435,13 @@ pub fn preload(data_dir: &Path) {
                 if target_voice != native_voice {
                     let _ = ensure_voice_loaded(&mut state, native_voice);
                 }
+
+                // Warmup inference — triggers CUDA/DirectML kernel compilation
+                // so the first real speak() call doesn't pay the JIT tax (~5-10s).
+                match warmup_inference(&mut state) {
+                    Ok(()) => log::info!("[kokoro] Warmup inference complete"),
+                    Err(e) => log::warn!("[kokoro] Warmup failed (non-fatal): {e}"),
+                }
             }
             log::info!("[kokoro] Preloaded in {:.0?}", t0.elapsed());
         }
@@ -408,7 +451,7 @@ pub fn preload(data_dir: &Path) {
     }
 }
 
-pub fn speak(text: &str, lang: &str, voice: Option<&str>, speed: Option<f32>, data_dir: &Path) -> Result<Vec<u8>, String> {
+pub fn speak(text: &str, lang: &str, voice: Option<&str>, speed: Option<f32>, _data_dir: &Path) -> Result<Vec<u8>, String> {
     if text.trim().is_empty() {
         return Err("Empty text".into());
     }
@@ -417,16 +460,36 @@ pub fn speak(text: &str, lang: &str, voice: Option<&str>, speed: Option<f32>, da
         return Err("Kokoro disabled (force_web_speech)".into());
     }
 
-    let state_mutex = get_or_init_state(data_dir)?;
-    let mut state = state_mutex
-        .lock()
-        .map_err(|e| format!("TTS lock poisoned: {e}"))?;
+    // Fail-fast: if TTS isn't initialized yet (preload still running),
+    // return error immediately so frontend falls back to Web Speech API.
+    // Don't trigger lazy init from user requests — only preload() does that.
+    let state_mutex = match STATE.get() {
+        Some(Ok(m)) => m,
+        Some(Err(e)) => return Err(e.clone()),
+        None => return Err("TTS still loading".into()),
+    };
+
+    // Non-blocking lock — preload may hold this during warmup inference.
+    // If busy, return error → Web Speech fallback. Kokoro takes over once warm.
+    let mut state = match state_mutex.try_lock() {
+        Ok(guard) => guard,
+        Err(std::sync::TryLockError::WouldBlock) => {
+            return Err("TTS busy (warming up)".into());
+        }
+        Err(std::sync::TryLockError::Poisoned(e)) => {
+            return Err(format!("TTS lock poisoned: {e}"));
+        }
+    };
 
     let voice_name = voice.unwrap_or_else(|| default_voice(lang));
     ensure_voice_loaded(&mut state, voice_name)?;
 
+    let t_total = std::time::Instant::now();
+
     // 1. Phonemize
+    let t0 = std::time::Instant::now();
     let ipa = phonemize(text, lang)?;
+    log::info!("[tts] phonemize: {:.0?}", t0.elapsed());
     log::info!("[kokoro] {lang} IPA: {ipa}");
 
     // 2. Tokenize
@@ -455,10 +518,12 @@ pub fn speak(text: &str, lang: &str, voice: Option<&str>, speed: Option<f32>, da
         "speed" => speed_tensor,
     ];
 
+    let t0 = std::time::Instant::now();
     let outputs = state
         .session
         .run(inputs)
         .map_err(|e| format!("ONNX inference error: {e}"))?;
+    log::info!("[tts] inference: {:.0?}", t0.elapsed());
 
     // 5. Extract audio samples
     let (_shape, samples_slice) = outputs[0]
@@ -469,7 +534,9 @@ pub fn speak(text: &str, lang: &str, voice: Option<&str>, speed: Option<f32>, da
     log::info!("[kokoro] Generated {} samples ({:.1}s audio)", samples.len(), samples.len() as f32 / SAMPLE_RATE as f32);
 
     // 6. Encode WAV
-    encode_wav(&samples)
+    let wav = encode_wav(&samples)?;
+    log::info!("[tts] total: {:.0?}", t_total.elapsed());
+    Ok(wav)
 }
 
 pub fn list_voices(data_dir: &Path) -> Vec<VoiceInfo> {
@@ -540,6 +607,20 @@ pub fn status(data_dir: &Path) -> TtsStatus {
                 model_loaded: has_model,
             }
         }
+    }
+}
+
+pub fn get_device() -> String {
+    match STATE.get() {
+        Some(Ok(mutex)) => {
+            if let Ok(state) = mutex.lock() {
+                state.device.clone()
+            } else {
+                "lock_error".into()
+            }
+        }
+        Some(Err(_)) => "error".into(),
+        None => "not_loaded".into(),
     }
 }
 

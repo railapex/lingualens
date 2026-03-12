@@ -78,12 +78,14 @@ fn ensure_loaded(data_dir: &Path) -> Result<(), String> {
         .with_split_mode(llama_cpp_2::model::params::LlamaSplitMode::None)
         .with_main_gpu(0));
 
+    let t0 = std::time::Instant::now();
     let model = LlamaModel::load_from_file(&backend, &model_path, &model_params)
         .map_err(|e| format!("Model load failed: {e}"))?;
 
     log::info!(
-        "TranslateGemma loaded ({} GPU layers)",
-        if gpu_layers == 0 { "0 — CPU only" } else { "all" }
+        "[translate] TranslateGemma loaded in {:.1?} ({} GPU layers)",
+        t0.elapsed(),
+        gpu_layers
     );
 
     let _ = STATE.set(Mutex::new(TranslateState { backend, model }));
@@ -91,6 +93,7 @@ fn ensure_loaded(data_dir: &Path) -> Result<(), String> {
 }
 
 fn run_inference(state: &TranslateState, prompt: &str) -> Result<String, String> {
+    let t_total = std::time::Instant::now();
     let ctx_params = LlamaContextParams::default()
         .with_n_ctx(Some(NonZeroU32::new(CTX_SIZE).unwrap()))
         .with_n_threads(4)
@@ -119,8 +122,11 @@ fn run_inference(state: &TranslateState, prompt: &str) -> Result<String, String>
             .map_err(|e| format!("Batch add failed: {e}"))?;
     }
 
+    log::info!("[translate] {} prompt tokens", tokens.len());
+    let t0 = std::time::Instant::now();
     ctx.decode(&mut batch)
         .map_err(|e| format!("Prompt decode failed: {e}"))?;
+    log::info!("[translate] prompt decode: {:.0?}", t0.elapsed());
 
     // Generate with temp=0 for deterministic output
     let mut sampler = LlamaSampler::chain_simple([
@@ -166,6 +172,7 @@ fn run_inference(state: &TranslateState, prompt: &str) -> Result<String, String>
     }
 
     let output = sanitize_translation(output.trim());
+    log::info!("[translate] {} tokens generated in {:.0?}", n_cur - tokens.len() as i32, t_total.elapsed());
     Ok(output)
 }
 
@@ -245,6 +252,10 @@ pub fn translate(
     let state = STATE.get().unwrap().lock().map_err(|e| e.to_string())?;
     let prompt = build_prompt(text, source_lang, target_lang);
     run_inference(&state, &prompt)
+}
+
+pub fn is_loaded() -> bool {
+    STATE.get().is_some()
 }
 
 #[cfg(test)]

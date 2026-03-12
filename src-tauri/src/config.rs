@@ -18,6 +18,8 @@ pub struct Config {
     pub tts_voice_native: Option<String>,
     pub hotkey: String,
 
+    pub start_with_windows: bool,
+
     // Dev/testing overrides (default: false = use best available)
     pub force_cpu: bool,           // Skip CUDA/DirectML, force CPU inference
     pub force_web_speech: bool,    // Skip Kokoro, force Web Speech API for TTS
@@ -38,6 +40,7 @@ impl Default for Config {
             tts_voice_target: None,
             tts_voice_native: None,
             hotkey: "ctrl+alt+l".into(),
+            start_with_windows: false,
             force_cpu: false,
             force_web_speech: false,
             force_dict_only: false,

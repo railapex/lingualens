@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 use std::process::Command as StdCommand;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use std::sync::OnceLock;
 use tauri::{Emitter, Manager};
 
@@ -493,10 +495,12 @@ fn get_active_monitor_center() -> Result<[i32; 4], String> {
 
 #[tauri::command]
 fn get_ipa(text: String, lang: String) -> Result<String, String> {
-    let output = StdCommand::new(espeak_exe())
-        .env("ESPEAK_DATA_PATH", espeak_data())
-        .args(&["-v", &lang, "--ipa", "-q", &text])
-        .output();
+    let mut cmd = StdCommand::new(espeak_exe());
+    cmd.env("ESPEAK_DATA_PATH", espeak_data())
+       .args(&["-v", &lang, "--ipa", "-q", &text]);
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    let output = cmd.output();
 
     match output {
         Ok(out) if out.status.success() => {
@@ -586,25 +590,89 @@ fn set_config(
         if let Some(v) = updates.get("force_clipboard").and_then(|v| v.as_bool()) {
             cfg.force_clipboard = v;
         }
+        if let Some(v) = updates.get("start_with_windows").and_then(|v| v.as_bool()) {
+            cfg.start_with_windows = v;
+        }
     })?;
 
     let _ = app_handle.emit("config-changed", &updated);
     Ok(updated)
 }
 
+// --- OS audio playback (PlaySound FFI) ---
+// Plays WAV in Rust via Windows API — no binary data over IPC.
+
+#[cfg(target_os = "windows")]
+mod audio {
+    const SND_MEMORY: u32 = 0x0004;
+    const SND_ASYNC: u32 = 0x0001;
+    const SND_NODEFAULT: u32 = 0x0002;
+
+    #[link(name = "winmm")]
+    extern "system" {
+        fn PlaySoundW(pszSound: *const u8, hmod: *mut std::ffi::c_void, fdwSound: u32) -> i32;
+    }
+
+    /// Static buffer keeps WAV alive during async playback.
+    static WAV_BUFFER: std::sync::Mutex<Vec<u8>> = std::sync::Mutex::new(Vec::new());
+
+    pub fn play(wav_bytes: Vec<u8>) {
+        let mut guard = WAV_BUFFER.lock().unwrap();
+        // Stop any current playback before replacing buffer
+        unsafe { PlaySoundW(std::ptr::null(), std::ptr::null_mut(), SND_ASYNC); }
+        *guard = wav_bytes;
+        let ptr = guard.as_ptr();
+        unsafe {
+            PlaySoundW(ptr, std::ptr::null_mut(), SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
+        }
+    }
+
+    pub fn stop() {
+        unsafe { PlaySoundW(std::ptr::null(), std::ptr::null_mut(), SND_ASYNC); }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+mod audio {
+    pub fn play(_wav_bytes: Vec<u8>) {}
+    pub fn stop() {}
+}
+
 #[tauri::command]
-fn speak(
+fn stop_tts() {
+    audio::stop();
+}
+
+#[tauri::command]
+async fn speak(
     text: String,
     lang: String,
     voice: Option<String>,
     speed: Option<f32>,
     app_handle: tauri::AppHandle,
-) -> Result<Vec<u8>, String> {
+) -> Result<f32, String> {
     let data_dir = app_handle
         .path()
         .app_data_dir()
         .map_err(|e| e.to_string())?;
-    tts::speak(&text, &lang, voice.as_deref(), speed, &data_dir)
+
+    // Run inference on a blocking thread (don't tie up the async runtime)
+    let wav_bytes = tokio::task::spawn_blocking(move || {
+        tts::speak(&text, &lang, voice.as_deref(), speed, &data_dir)
+    })
+    .await
+    .map_err(|e| format!("TTS task failed: {e}"))??;
+
+    // Calculate duration: WAV = 44-byte header + 16-bit mono PCM at 24kHz
+    let data_bytes = wav_bytes.len().saturating_sub(44);
+    let duration = (data_bytes / 2) as f32 / 24000.0;
+
+    log::info!("[tts] Playing {:.1}s audio ({} bytes)", duration, wav_bytes.len());
+
+    // Play via OS audio API — no binary data over IPC
+    audio::play(wav_bytes);
+
+    Ok(duration)
 }
 
 #[tauri::command]
@@ -693,7 +761,7 @@ fn detect_lang(text: &str, target_lang: &str, native_lang: &str, data_dir: &std:
 }
 
 #[tauri::command]
-fn translate_text(
+async fn translate_text(
     text: String,
     source_lang: String,
     target_lang: String,
@@ -721,10 +789,32 @@ fn translate_text(
         return Ok(result);
     }
 
-    // Slow path: TranslateGemma model
-    let result = translate::translate(&text, &source_lang, &target_lang, &data_dir)?;
+    // Model inference on blocking thread — don't tie up async runtime
+    let t = text.clone();
+    let sl = source_lang.clone();
+    let tl = target_lang.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        translate::translate(&t, &sl, &tl, &data_dir)
+    })
+    .await
+    .map_err(|e| format!("Translation task failed: {e}"))??;
+
     let _ = history::insert(&text, &source_lang, &result, &target_lang, "model");
     Ok(result)
+}
+
+/// Capitalize first letter of each hotkey part for display (e.g. "ctrl+alt+l" → "Ctrl+Alt+L").
+fn format_hotkey_display(hotkey: &str) -> String {
+    hotkey.split('+')
+        .map(|s| {
+            let mut c = s.chars();
+            match c.next() {
+                None => String::new(),
+                Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("+")
 }
 
 fn open_or_focus_window(app: &tauri::AppHandle, label: &str, title: &str, url: &str, width: f64, height: f64) {
@@ -756,9 +846,13 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .item(&quit)
         .build()?;
 
-    let _tray = TrayIconBuilder::new()
+    let cfg = config::get();
+    let hotkey_display = format_hotkey_display(&cfg.hotkey);
+    let tooltip = format!("LinguaLens \u{2014} {}", hotkey_display);
+
+    let _tray = TrayIconBuilder::with_id("main")
         .icon(app.default_window_icon().unwrap().clone())
-        .tooltip("LinguaLens")
+        .tooltip(&tooltip)
         .menu(&menu)
         .show_menu_on_left_click(true)
         .on_menu_event(move |app, event| {
@@ -769,7 +863,7 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             } else if id == "open_debug" {
                 open_or_focus_window(app, "test", "LinguaLens Debug", "test.html", 820.0, 700.0);
             } else if id == "quit" {
-                std::process::exit(0);
+                app.exit(0);
             }
         })
         .build(app)?;
@@ -784,14 +878,16 @@ fn register_hotkey(app_handle: &tauri::AppHandle, shortcut: &str) -> Result<(), 
     app_handle.global_shortcut().on_shortcut(shortcut, move |_app, _shortcut, event| {
         if event.state() == ShortcutState::Pressed {
             log::info!("[hotkey] pressed");
-            let text = get_selected_text().unwrap_or_default();
-            let text = text.trim().to_string();
-            log::info!("[hotkey] captured text: {:?}", &text[..text.len().min(50)]);
-
-            let monitor = get_active_monitor_center().ok();
-
             let h = handle.clone();
+            // Move ALL work off the main thread to prevent "Not Responding".
+            // Text capture (UIA/clipboard, up to 550ms) must not block the message pump.
             std::thread::spawn(move || {
+                let text = get_selected_text().unwrap_or_default();
+                let text = text.trim().to_string();
+                log::info!("[hotkey] captured text: {:?}", &text[..text.len().min(50)]);
+
+                let monitor = get_active_monitor_center().ok();
+
                 if let Some(window) = h.get_webview_window("main") {
                     if let Some([cx, cy, _, _]) = monitor {
                         if let Ok(size) = window.inner_size() {
@@ -826,6 +922,13 @@ fn update_hotkey(new_hotkey: String, app_handle: tauri::AppHandle) -> Result<(),
     let old = config::get().hotkey;
     let _ = app_handle.global_shortcut().unregister(old.as_str());
     register_hotkey(&app_handle, &new_hotkey)?;
+
+    // Update tray tooltip with new hotkey
+    if let Some(tray) = app_handle.tray_by_id("main") {
+        let display = format_hotkey_display(&new_hotkey);
+        let _ = tray.set_tooltip(Some(&format!("LinguaLens \u{2014} {}", display)));
+    }
+
     let data_dir = app_handle.path().app_data_dir().map_err(|e| e.to_string())?;
     let _ = config::update(&data_dir, |cfg| { cfg.hotkey = new_hotkey; });
     Ok(())
@@ -885,12 +988,52 @@ fn preload_models(app_handle: tauri::AppHandle) {
     });
 }
 
+#[tauri::command]
+fn diagnose_gpu() -> serde_json::Value {
+    let tts_device = tts::get_device();
+    let translate_loaded = translate::is_loaded();
+    serde_json::json!({
+        "tts_device": tts_device,
+        "translate_loaded": translate_loaded,
+        "force_cpu": config::get().force_cpu,
+    })
+}
+
+#[tauri::command]
+async fn diagnose_tts(app_handle: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    let data_dir = app_handle.path().app_data_dir().map_err(|e| e.to_string())?;
+    tokio::task::spawn_blocking(move || {
+        let t0 = std::time::Instant::now();
+        let wav = tts::speak("test", "en", None, None, &data_dir)?;
+        Ok(serde_json::json!({
+            "device": tts::get_device(),
+            "latency_ms": t0.elapsed().as_millis(),
+            "wav_bytes": wav.len(),
+        }))
+    }).await.map_err(|e| format!("{e}"))?
+}
+
+#[tauri::command]
+async fn diagnose_translate(app_handle: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    let data_dir = app_handle.path().app_data_dir().map_err(|e| e.to_string())?;
+    tokio::task::spawn_blocking(move || {
+        let t0 = std::time::Instant::now();
+        let result = translate::translate("hello", "en", "es", &data_dir)?;
+        Ok(serde_json::json!({
+            "latency_ms": t0.elapsed().as_millis(),
+            "result": result,
+        }))
+    }).await.map_err(|e| format!("{e}"))?
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        // TODO: add tauri_plugin_updater once signing keys are generated
-        // .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent, None
+        ))
         .plugin(
             tauri_plugin_log::Builder::default()
                 .level(log::LevelFilter::Info)
@@ -900,6 +1043,17 @@ pub fn run() {
             // Initialize config before anything else
             let data_dir = app.path().app_data_dir().unwrap_or_default();
             config::init(&data_dir);
+
+            // Sync autostart state with config
+            {
+                use tauri_plugin_autostart::ManagerExt;
+                let autostart = app.autolaunch();
+                if config::get().start_with_windows {
+                    let _ = autostart.enable();
+                } else {
+                    let _ = autostart.disable();
+                }
+            }
 
             // Resolve espeak-ng path: bundled resource → system fallback
             {
@@ -950,10 +1104,9 @@ pub fn run() {
             // System tray
             setup_tray(app)?;
 
-            // Preload models: dict + TTS in parallel (dict=CPU, TTS=CUDA),
-            // then TranslateGemma after TTS finishes (both want CUDA).
-            // Skip TTS/translate preload if model files are missing (first-run
-            // downloads them later, then calls preload_models command).
+            // Preload models: dict (CPU, parallel), then TTS (CUDA), then translate (CUDA).
+            // TTS and translate are sequential — both want CUDA, loading simultaneously
+            // can cause context conflicts and GPU fallback to CPU.
             {
                 let data_dir = data_dir.clone();
                 std::thread::spawn(move || {
@@ -996,10 +1149,14 @@ pub fn run() {
             restore_hotkey,
             get_history,
             get_history_count,
+            stop_tts,
             check_models,
             start_download,
             cancel_download,
             preload_models,
+            diagnose_gpu,
+            diagnose_tts,
+            diagnose_translate,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

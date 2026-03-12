@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "LinguaLens",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "identifier": "com.lingualens.app",
   "build": {
     "frontendDist": "../dist",
@@ -51,5 +51,12 @@
       }
     }
   },
-  "plugins": {}
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEU2NzYzRTExNDczODZCRjEKUldUeGF6aEhFVDUyNXNVc1U1d0hVejVSeklzT2U3d1VwTVVNWGdjZk9vVWNXM01ZUjRJMGZtNmIK",
+      "endpoints": [
+        "https://github.com/railapex/lingualens/releases/latest/download/latest.json"
+      ]
+    }
+  }
 }

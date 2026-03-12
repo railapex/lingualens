@@ -29,14 +29,14 @@ const DOWNLOADS: &[ModelFile] = &[
     ModelFile {
         name: "Kokoro TTS (fp32)",
         repo: "onnx-community/Kokoro-82M-v1.0-ONNX",
-        path: "model.onnx",
+        path: "onnx/model.onnx",
         dest: "kokoro/model.onnx",
         size_bytes: 325_532_232,
     },
     ModelFile {
         name: "Kokoro TTS (quantized)",
         repo: "onnx-community/Kokoro-82M-v1.0-ONNX",
-        path: "model_quantized.onnx",
+        path: "onnx/model_quantized.onnx",
         dest: "kokoro/model_quantized.onnx",
         size_bytes: 92_361_116,
     },
@@ -52,28 +52,28 @@ const DOWNLOADS: &[ModelFile] = &[
         repo: "onnx-community/Kokoro-82M-v1.0-ONNX",
         path: "voices/ef_dora.bin",
         dest: "kokoro/voices/ef_dora.bin",
-        size_bytes: 523_776,
+        size_bytes: 522_240,
     },
     ModelFile {
         name: "Voice: em_alex (Spanish male)",
         repo: "onnx-community/Kokoro-82M-v1.0-ONNX",
         path: "voices/em_alex.bin",
         dest: "kokoro/voices/em_alex.bin",
-        size_bytes: 523_776,
+        size_bytes: 522_240,
     },
     ModelFile {
         name: "Voice: af_heart (English female)",
         repo: "onnx-community/Kokoro-82M-v1.0-ONNX",
         path: "voices/af_heart.bin",
         dest: "kokoro/voices/af_heart.bin",
-        size_bytes: 523_776,
+        size_bytes: 522_240,
     },
     ModelFile {
         name: "Voice: af_bella (English female)",
         repo: "onnx-community/Kokoro-82M-v1.0-ONNX",
         path: "voices/af_bella.bin",
         dest: "kokoro/voices/af_bella.bin",
-        size_bytes: 523_776,
+        size_bytes: 522_240,
     },
 ];
 
@@ -236,16 +236,16 @@ pub async fn download_models(
         file.flush().await.map_err(|e| format!("Flush error: {e}"))?;
         drop(file);
 
-        // Validate downloaded size before accepting
+        // Validate downloaded size against Content-Length (not hardcoded — upstream sizes drift)
         let actual_size = tokio::fs::metadata(&partial)
             .await
             .map(|m| m.len())
             .unwrap_or(0);
-        if actual_size != model.size_bytes {
+        if total_size > 0 && actual_size != total_size {
             let _ = tokio::fs::remove_file(&partial).await;
             return Err(format!(
                 "{}: expected {} bytes, got {} — file removed, retry download",
-                model.name, model.size_bytes, actual_size
+                model.name, total_size, actual_size
             ));
         }
 

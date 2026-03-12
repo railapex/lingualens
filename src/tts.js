@@ -1,7 +1,7 @@
 // TTS — Kokoro (Rust/GPU) primary, Web Speech API fallback
+// Audio playback happens in Rust via OS API (no binary data over IPC).
 
 import { invoke } from '@tauri-apps/api/core';
-import { playWavBytes, stopPlayback } from './audio.js';
 
 // --- Web Speech API fallback ---
 
@@ -45,8 +45,10 @@ async function speakWebSpeech(text, lang) {
 
 export async function speak(text, lang = 'es', { speed } = {}) {
   try {
-    const wavBytes = await invoke('speak', { text, lang, speed: speed ?? null });
-    return await playWavBytes(wavBytes);
+    // Returns duration in seconds — audio plays in Rust via OS API
+    const duration = await invoke('speak', { text, lang, speed: speed ?? null });
+    // Wait for audio to finish playing
+    return new Promise(resolve => setTimeout(resolve, duration * 1000));
   } catch (e) {
     console.warn('Kokoro TTS failed, falling back to Web Speech:', e);
     return speakWebSpeech(text, lang);
@@ -54,13 +56,11 @@ export async function speak(text, lang = 'es', { speed } = {}) {
 }
 
 export function stop() {
-  stopPlayback();
+  invoke('stop_tts').catch(() => {});
   speechSynthesis.cancel();
 }
 
 export async function preload() {
-  // Kokoro initializes lazily on first speak() call in Rust
-  // Warm it up with a silent call to check status
   try {
     await invoke('get_tts_status');
   } catch (e) {

@@ -22,6 +22,14 @@
     <div class="download-hint">Translation + natural TTS require ~2.9 GB of model data.<br>Basic mode: dictionary lookups + system voices only.</div>
   </div>
 
+  <!-- Ready screen (shown after model download completes) -->
+  <div id="ready-view" class="ready-view" style="display: none;">
+    <div class="ready-check">&#x2713;</div>
+    <div class="ready-title">You're all set.</div>
+    <kbd id="ready-hotkey" class="ready-hotkey"></kbd>
+    <div class="ready-hint">Select text anywhere, then press your hotkey.</div>
+  </div>
+
   <div id="overlay" class="overlay hidden">
     <!-- Translation view -->
     <div id="translate-view">

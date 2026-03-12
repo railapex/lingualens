@@ -10,6 +10,27 @@ html, body {
   font-family: 'Segoe UI Variable', 'Segoe UI', system-ui, -apple-system, sans-serif;
   user-select: none;
   -webkit-user-select: none;
+
+  /* Chrome variables — used by download + ready views */
+  --chrome-bg: rgba(28, 28, 32, 0.95);
+  --chrome-border: rgba(255, 255, 255, 0.08);
+  --chrome-title: #f0f0f0;
+  --chrome-text: rgba(255, 255, 255, 0.5);
+  --chrome-dim: rgba(255, 255, 255, 0.3);
+  --chrome-accent: #5b9cf0;
+  --chrome-btn-border: rgba(255, 255, 255, 0.15);
+}
+
+@media (prefers-color-scheme: light) {
+  html, body {
+    --chrome-bg: rgba(255, 255, 255, 0.95);
+    --chrome-border: rgba(0, 0, 0, 0.08);
+    --chrome-title: #1a1a1a;
+    --chrome-text: rgba(0, 0, 0, 0.45);
+    --chrome-dim: rgba(0, 0, 0, 0.25);
+    --chrome-accent: #2563eb;
+    --chrome-btn-border: rgba(0, 0, 0, 0.15);
+  }
 }
 
 /* --- Dark theme (default) --- */
@@ -249,8 +270,8 @@ html, body {
   transform: translate(-50%, -50%);
   width: 420px;
   padding: 24px 28px;
-  background: rgba(28, 28, 32, 0.95);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--chrome-bg);
+  border: 1px solid var(--chrome-border);
   border-radius: 12px;
   backdrop-filter: blur(24px);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
@@ -260,13 +281,13 @@ html, body {
 .download-title {
   font-size: 16px;
   font-weight: 600;
-  color: #f0f0f0;
+  color: var(--chrome-title);
   margin-bottom: 16px;
 }
 
 .download-model-name {
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--chrome-text);
   margin-bottom: 8px;
   min-height: 18px;
 }
@@ -274,7 +295,7 @@ html, body {
 .download-bar-container {
   width: 100%;
   height: 6px;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--chrome-border);
   border-radius: 3px;
   overflow: hidden;
   margin-bottom: 8px;
@@ -283,14 +304,14 @@ html, body {
 .download-bar {
   height: 100%;
   width: 0%;
-  background: #5b9cf0;
+  background: var(--chrome-accent);
   border-radius: 3px;
   transition: width 0.3s ease-out;
 }
 
 .download-stats {
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--chrome-text);
   margin-bottom: 16px;
   min-height: 16px;
 }
@@ -298,9 +319,9 @@ html, body {
 .download-skip {
   padding: 6px 16px;
   border-radius: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  border: 1px solid var(--chrome-btn-border);
   background: transparent;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--chrome-text);
   font-size: 13px;
   font-family: inherit;
   cursor: pointer;
@@ -308,16 +329,16 @@ html, body {
 }
 
 .download-skip:hover {
-  color: rgba(255, 255, 255, 0.8);
-  border-color: rgba(255, 255, 255, 0.3);
+  color: var(--chrome-title);
+  border-color: var(--chrome-dim);
 }
 
 .download-retry {
   padding: 6px 16px;
   border-radius: 6px;
-  border: 1px solid #5b9cf0;
-  background: rgba(91, 156, 240, 0.15);
-  color: #5b9cf0;
+  border: 1px solid var(--chrome-accent);
+  background: transparent;
+  color: var(--chrome-accent);
   font-size: 13px;
   font-family: inherit;
   cursor: pointer;
@@ -326,12 +347,59 @@ html, body {
 }
 
 .download-retry:hover {
-  background: rgba(91, 156, 240, 0.25);
+  background: var(--chrome-border);
 }
 
 .download-hint {
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.3);
+  color: var(--chrome-dim);
   margin-top: 12px;
   line-height: 1.5;
+}
+
+/* --- Ready view (post-download) --- */
+.ready-view {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 420px;
+  padding: 32px 28px;
+  background: var(--chrome-bg);
+  border: 1px solid var(--chrome-border);
+  border-radius: 12px;
+  backdrop-filter: blur(24px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+  text-align: center;
+  cursor: pointer;
+}
+
+.ready-check {
+  font-size: 40px;
+  color: var(--chrome-accent);
+  margin-bottom: 8px;
+}
+
+.ready-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--chrome-title);
+  margin-bottom: 16px;
+}
+
+.ready-hotkey {
+  display: inline-block;
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--chrome-accent);
+  background: transparent;
+  font-family: 'Segoe UI', monospace;
+  font-size: 18px;
+  color: var(--chrome-title);
+  margin-bottom: 12px;
+}
+
+.ready-hint {
+  font-size: 13px;
+  color: var(--chrome-dim);
 }

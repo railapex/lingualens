@@ -400,14 +400,34 @@ async function checkAndDownloadModels() {
       downloadStats.textContent = `${formatBytes(p.overall_bytes_downloaded)} / ${formatBytes(p.overall_bytes_total)} \u00B7 ${pct.toFixed(0)}%`;
     });
 
-    // Complete listener
+    // Complete listener — show ready screen
     unlistenComplete = listen('download-complete', () => {
       cleanup();
       downloadView.style.display = 'none';
-      appWindow.hide();
-      // Trigger model preloading now that files exist
+
+      // Show ready screen with hotkey
+      const readyView = document.getElementById('ready-view');
+      const readyHotkey = document.getElementById('ready-hotkey');
+      readyHotkey.textContent = formatHotkey(config.hotkey || 'ctrl+alt+l');
+      readyView.style.display = 'block';
+
+      // Start model preloading in background
       invoke('preload_models').catch(() => {});
-      resolve(true);
+
+      // Auto-dismiss after 5s or on click
+      let dismissed = false;
+      const dismiss = () => {
+        if (dismissed) return;
+        dismissed = true;
+        readyView.style.display = 'none';
+        appWindow.hide();
+        resolve(true);
+      };
+      const autoTimer = setTimeout(dismiss, 5000);
+      readyView.addEventListener('click', () => {
+        clearTimeout(autoTimer);
+        dismiss();
+      }, { once: true });
     });
 
     function startDownload() {
@@ -430,6 +450,22 @@ async function checkAndDownloadModels() {
   });
 }
 
+// --- Auto-update check ---
+
+async function checkForUpdates() {
+  try {
+    const { check } = await import('@tauri-apps/plugin-updater');
+    const update = await check();
+    if (update) {
+      console.log(`[lingualens] update available: ${update.version}`);
+      // Download and install — NSIS handles restart prompt
+      await update.downloadAndInstall();
+    }
+  } catch (e) {
+    console.log('[lingualens] update check skipped:', e.message);
+  }
+}
+
 // --- Init ---
 
 let firstRun = false;
@@ -438,6 +474,9 @@ async function init() {
   console.log('[lingualens] init()');
 
   await loadConfig();
+
+  // Check for updates in background (non-blocking)
+  checkForUpdates();
 
   // Check for missing models and download if needed
   await checkAndDownloadModels();

@@ -1,0 +1,9 @@
+{
+  "identifier": "com.lingualens.dev",
+  "productName": "LinguaLens [DEV]",
+  "plugins": {
+    "updater": {
+      "endpoints": []
+    }
+  }
+}

@@ -2,6 +2,8 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { getVersion } from '@tauri-apps/api/app';
+import { enable as enableAutostart, disable as disableAutostart } from '@tauri-apps/plugin-autostart';
 import { playWavBytes, stopPlayback } from './audio.js';
 
 // --- DOM refs ---
@@ -24,6 +26,7 @@ const forceCpuEl = document.getElementById('force-cpu');
 const forceWebSpeechEl = document.getElementById('force-web-speech');
 const forceDictOnlyEl = document.getElementById('force-dict-only');
 const forceClipboardEl = document.getElementById('force-clipboard');
+const startWithWindowsEl = document.getElementById('start-with-windows');
 
 const hotkeyDisplay = document.getElementById('hotkey-display');
 const hotkeyChangeBtn = document.getElementById('hotkey-change');
@@ -95,6 +98,9 @@ function populateControls() {
   dismissDelayEl.value = config.dismiss_delay_ms ?? 2000;
   dismissDelayVal.textContent = `${(parseInt(dismissDelayEl.value) / 1000).toFixed(1)}s`;
   hotkeyDisplay.textContent = formatHotkey(config.hotkey || 'ctrl+alt+l');
+
+  // Startup
+  startWithWindowsEl.checked = config.start_with_windows || false;
 
   // Dev switches
   forceCpuEl.checked = config.force_cpu || false;
@@ -203,6 +209,19 @@ forceCpuEl.addEventListener('change', () => updateConfig({ force_cpu: forceCpuEl
 forceWebSpeechEl.addEventListener('change', () => updateConfig({ force_web_speech: forceWebSpeechEl.checked }));
 forceDictOnlyEl.addEventListener('change', () => updateConfig({ force_dict_only: forceDictOnlyEl.checked }));
 forceClipboardEl.addEventListener('change', () => updateConfig({ force_clipboard: forceClipboardEl.checked }));
+
+// --- Autostart ---
+
+startWithWindowsEl.addEventListener('change', async () => {
+  const enabled = startWithWindowsEl.checked;
+  try {
+    if (enabled) await enableAutostart(); else await disableAutostart();
+    await updateConfig({ start_with_windows: enabled });
+  } catch (e) {
+    console.warn('Autostart toggle failed:', e);
+    startWithWindowsEl.checked = !enabled; // revert
+  }
+});
 
 // --- Hotkey capture ---
 
@@ -398,6 +417,12 @@ listen('config-changed', (event) => {
 async function init() {
   await loadConfig();
   await loadVoices();
+
+  // Dynamic version from build config
+  try {
+    const version = await getVersion();
+    document.getElementById('app-version').textContent = `v${version}`;
+  } catch {}
 }
 
 init();
