@@ -11,7 +11,7 @@ macOS port — cross-platform scaffolding for Apple Silicon + Intel.
 - **macOS espeak-ng paths** — Homebrew ARM (`/opt/homebrew`) and Intel (`/usr/local`) fallback
 - **CoreML TTS** — added to GPU cascade: CUDA → DirectML → CoreML → CPU
 - **Metal translation** — `llama-cpp-2/metal` feature flag, same `with_n_gpu_layers(999)` API as CUDA
-- **Cargo feature flags** — `gpu-windows` (CUDA + DirectML) and `gpu-macos` (Metal + CoreML), base deps are GPU-agnostic
+- **Target-conditional GPU deps** — CUDA + DirectML on Windows, Metal + CoreML on macOS, automatic per platform (no feature flags needed)
 - **CI matrix build** — Windows + macOS runners, per-platform manifest generation with merge job
 - **DMG bundle target** — `"targets": "all"` in tauri.conf.json, `macOS.minimumSystemVersion: "12.0"`
 - **Info.plist** — `NSAccessibilityUsageDescription` for Accessibility permission prompt
@@ -28,7 +28,7 @@ macOS port — cross-platform scaffolding for Apple Silicon + Intel.
 ### Dependencies
 
 - Added: `rodio 0.19`, `core-graphics 0.24` (macOS), `core-foundation 0.10` (macOS)
-- Removed from base: `llama-cpp-2/cuda`, `ort/cuda`, `ort/directml` (moved to `gpu-windows` feature)
+- GPU features now target-conditional: `llama-cpp-2/cuda` + `ort/cuda` + `ort/directml` on Windows, `llama-cpp-2/metal` + `ort/coreml` on macOS
 
 ## v0.2.1 (unreleased)
 

@@ -11,10 +11,8 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            features: gpu-windows
             tauri-args: ""
           - os: macos-latest
-            features: gpu-macos
             tauri-args: --target universal-apple-darwin
     runs-on: ${{ matrix.os }}
     permissions:
@@ -86,9 +84,9 @@ jobs:
         shell: bash
         run: |
           if [[ -n "${{ matrix.tauri-args }}" ]]; then
-            npx tauri build ${{ matrix.tauri-args }} -- --features ${{ matrix.features }}
+            npx tauri build ${{ matrix.tauri-args }}
           else
-            npx tauri build -- --features ${{ matrix.features }}
+            npx tauri build
           fi
         env:
           CUDAFLAGS: ${{ matrix.os == 'windows-latest' && '--allow-unsupported-compiler' || '' }}

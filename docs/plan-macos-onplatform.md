@@ -36,7 +36,7 @@ npm install
 
 ## Phase 1 — Does It Compile?
 
-### 1.1 Cargo check (no GPU features)
+### 1.1 Cargo check
 
 ```bash
 cd src-tauri
@@ -47,13 +47,9 @@ cargo check
 
 **If it fails**: Most likely cause is `core-graphics` or `core-foundation` crate version issues. The `extern "C"` declarations for `AXUIElement*`, `CFRelease`, and `CGDisplay*` functions are hand-written — if the crate versions expose these natively, there may be symbol conflicts. Fix: remove our `extern "C"` block and use the crate's own bindings.
 
-### 1.2 Cargo check with GPU features
+### 1.2 GPU features (automatic)
 
-```bash
-cargo check --features gpu-macos
-```
-
-**Expected**: Clean. This enables `llama-cpp-2/metal` and `ort/coreml`.
+GPU deps are target-conditional in `Cargo.toml` — Metal + CoreML are enabled automatically on macOS, CUDA + DirectML on Windows. No feature flags needed. The `cargo check` above already validates this.
 
 **Possible issues**:
 - `llama-cpp-2` metal feature may need cmake + Metal framework headers. Xcode CLI Tools should provide these.
@@ -193,8 +189,7 @@ Enable `force_clipboard` in Settings → Developer. Select text, press hotkey.
 
 ```bash
 cd src-tauri
-cargo test --features gpu-macos
-```
+cargo test ```
 
 **Expected passing** (no models/espeak needed):
 - `test_encode_wav_header`
@@ -463,16 +458,14 @@ cat src-tauri/target/release/bundle/macos/LinguaLens.app/Contents/Info.plist | g
 ```bash
 npm run dev
 # or for a release build:
-npx tauri build -- --features gpu-macos
-```
+npx tauri build -- ```
 
 Output: `src-tauri/target/release/bundle/dmg/LinguaLens_0.2.1_aarch64.dmg`
 
 ### 5.2 Universal binary
 
 ```bash
-npx tauri build --target universal-apple-darwin -- --features gpu-macos
-```
+npx tauri build --target universal-apple-darwin -- ```
 
 Output: `src-tauri/target/universal-apple-darwin/release/bundle/dmg/LinguaLens_0.2.1_universal.dmg`
 
@@ -509,8 +502,7 @@ This is a follow-up, not a blocker for testing.
 ## Checklist
 
 ### Compile & Launch
-- [ ] `cargo check` succeeds (no features)
-- [ ] `cargo check --features gpu-macos` succeeds
+- [ ] `cargo check` succeeds (GPU features are target-conditional, no flags needed)
 - [ ] `npm run dev` launches — window + tray icon appear
 - [ ] Tray menu works (Settings, Debug Tools, Quit)
 - [ ] Settings panel loads, all controls functional
@@ -534,13 +526,13 @@ This is a follow-up, not a blocker for testing.
 - [ ] `force_clipboard` dev switch works
 
 ### Build & Package
-- [ ] `npx tauri build -- --features gpu-macos` produces .dmg
+- [ ] `npx tauri build` produces .dmg
 - [ ] DMG installs to /Applications
 - [ ] Installed app launches and works
 - [ ] `Info.plist` contains `NSAccessibilityUsageDescription`
 
 ### Tests
-- [ ] Unit tests pass (`cargo test --features gpu-macos`)
+- [ ] Unit tests pass (`cargo test`)
 - [ ] espeak test helper added and phonemize tests pass
 - [ ] macOS-specific smoke tests added (see §3.2)
 
