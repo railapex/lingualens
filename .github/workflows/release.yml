@@ -17,10 +17,20 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
 
       - uses: Jimver/cuda-toolkit@v0.2.23
         with:
           cuda: '12.6.0'
+          method: 'network'
+          use-github-cache: true
+          use-local-cache: false
+
+      - name: Cache Cargo registry + build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          cache-on-failure: true
 
       - name: Install espeak-ng
         shell: pwsh
