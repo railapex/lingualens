@@ -1,8 +1,11 @@
 // Kokoro TTS — 82M ONNX model, GPU-accelerated via ort
 // Pipeline: text → espeak-ng IPA → tokenize → ONNX inference → WAV bytes
 //
-// GPU cascade: CUDA → DirectML → CPU
-// Model files in %APPDATA%/com.lingualens.app/models/kokoro/
+// GPU cascade:
+// - macOS: CoreML
+// - Windows: CUDA → DirectML
+// - fallback: CPU
+// Model files in app data dir: .../com.lingualens.app/models/kokoro/
 
 use std::collections::HashMap;
 use std::io::Cursor;
@@ -304,7 +307,7 @@ fn init_state(data_dir: &Path) -> Result<std::sync::Mutex<TtsState>, String> {
 
     let tokenizer = Tokenizer::from_json(&tokenizer_path)?;
 
-    // Try GPU model (fp32) with CUDA, then DirectML; fall back to CPU with q8
+    // Try GPU model (fp32) with platform-appropriate execution provider; fall back to CPU with q8
     let (session, device) = create_session(&fp32_model, &q8_model)?;
 
     log::info!("Kokoro TTS initialized on {device}");
@@ -320,50 +323,59 @@ fn init_state(data_dir: &Path) -> Result<std::sync::Mutex<TtsState>, String> {
 
 fn create_session(fp32_path: &Path, q8_path: &Path) -> Result<(Session, String), String> {
     if !crate::config::get().force_cpu && fp32_path.exists() {
-        // CUDA attempt
-        let t0 = std::time::Instant::now();
-        match Session::builder()
-            .map_err(|e| e.to_string())
-            .and_then(|b| b.with_execution_providers([ort::ep::CUDA::default().build()]).map_err(|e| e.to_string()))
-            .and_then(|mut b| b.commit_from_file(fp32_path).map_err(|e| e.to_string()))
+        #[cfg(all(target_os = "macos", feature = "gpu-macos"))]
         {
-            Ok(session) => {
-                log::info!("[tts] CUDA session created in {:.0?}", t0.elapsed());
-                return Ok((session, "cuda".into()));
+            // macOS: prefer CoreML first to avoid unnecessary provider probing latency.
+            let t0 = std::time::Instant::now();
+            match Session::builder()
+                .map_err(|e| e.to_string())
+                .and_then(|b| b.with_execution_providers([ort::ep::CoreML::default().build()]).map_err(|e| e.to_string()))
+                .and_then(|mut b| b.commit_from_file(fp32_path).map_err(|e| e.to_string()))
+            {
+                Ok(session) => {
+                    log::info!("[tts] CoreML session created in {:.0?}", t0.elapsed());
+                    return Ok((session, "coreml".into()));
+                }
+                Err(e) => log::warn!("[tts] CoreML failed ({:.0?}): {}", t0.elapsed(), e),
             }
-            Err(e) => log::warn!("[tts] CUDA failed ({:.0?}): {}", t0.elapsed(), e),
         }
 
-        // DirectML attempt
-        let t0 = std::time::Instant::now();
-        match Session::builder()
-            .map_err(|e| e.to_string())
-            .and_then(|b| b.with_execution_providers([ort::ep::DirectML::default().build()]).map_err(|e| e.to_string()))
-            .and_then(|mut b| b.commit_from_file(fp32_path).map_err(|e| e.to_string()))
+        #[cfg(all(target_os = "windows", feature = "gpu-windows"))]
         {
-            Ok(session) => {
-                log::info!("[tts] DirectML session created in {:.0?}", t0.elapsed());
-                return Ok((session, "directml".into()));
+            // CUDA attempt
+            let t0 = std::time::Instant::now();
+            match Session::builder()
+                .map_err(|e| e.to_string())
+                .and_then(|b| b.with_execution_providers([ort::ep::CUDA::default().build()]).map_err(|e| e.to_string()))
+                .and_then(|mut b| b.commit_from_file(fp32_path).map_err(|e| e.to_string()))
+            {
+                Ok(session) => {
+                    log::info!("[tts] CUDA session created in {:.0?}", t0.elapsed());
+                    return Ok((session, "cuda".into()));
+                }
+                Err(e) => log::warn!("[tts] CUDA failed ({:.0?}): {}", t0.elapsed(), e),
             }
-            Err(e) => log::warn!("[tts] DirectML failed ({:.0?}): {}", t0.elapsed(), e),
-        }
-    }
 
-    // CoreML attempt (macOS)
-    #[cfg(target_os = "macos")]
-    if !crate::config::get().force_cpu && fp32_path.exists() {
-        let t0 = std::time::Instant::now();
-        match Session::builder()
-            .map_err(|e| e.to_string())
-            .and_then(|b| b.with_execution_providers([ort::ep::CoreML::default().build()]).map_err(|e| e.to_string()))
-            .and_then(|mut b| b.commit_from_file(fp32_path).map_err(|e| e.to_string()))
-        {
-            Ok(session) => {
-                log::info!("[tts] CoreML session created in {:.0?}", t0.elapsed());
-                return Ok((session, "coreml".into()));
+            // DirectML attempt
+            let t0 = std::time::Instant::now();
+            match Session::builder()
+                .map_err(|e| e.to_string())
+                .and_then(|b| b.with_execution_providers([ort::ep::DirectML::default().build()]).map_err(|e| e.to_string()))
+                .and_then(|mut b| b.commit_from_file(fp32_path).map_err(|e| e.to_string()))
+            {
+                Ok(session) => {
+                    log::info!("[tts] DirectML session created in {:.0?}", t0.elapsed());
+                    return Ok((session, "directml".into()));
+                }
+                Err(e) => log::warn!("[tts] DirectML failed ({:.0?}): {}", t0.elapsed(), e),
             }
-            Err(e) => log::warn!("[tts] CoreML failed ({:.0?}): {}", t0.elapsed(), e),
         }
+
+        #[cfg(all(target_os = "macos", not(feature = "gpu-macos")))]
+        log::warn!("[tts] gpu-macos feature disabled; CoreML unavailable");
+
+        #[cfg(all(target_os = "windows", not(feature = "gpu-windows")))]
+        log::warn!("[tts] gpu-windows feature disabled; CUDA/DirectML unavailable");
     }
 
     // CPU fallback
@@ -403,7 +415,7 @@ fn ensure_voice_loaded(
 }
 
 /// Run a minimal inference to trigger GPU kernel compilation.
-/// This takes 3-10 seconds on first call (CUDA JIT) but makes subsequent
+/// This takes 3-10 seconds on first call (provider kernel compile/JIT) but makes subsequent
 /// inferences near-instant.
 fn warmup_inference(state: &mut TtsState) -> Result<(), String> {
     let voice_data = state.voices.values().next()
@@ -453,7 +465,7 @@ pub fn preload(data_dir: &Path) {
                     let _ = ensure_voice_loaded(&mut state, native_voice);
                 }
 
-                // Warmup inference — triggers CUDA/DirectML kernel compilation
+                // Warmup inference — triggers provider kernel compilation
                 // so the first real speak() call doesn't pay the JIT tax (~5-10s).
                 match warmup_inference(&mut state) {
                     Ok(()) => log::info!("[kokoro] Warmup inference complete"),

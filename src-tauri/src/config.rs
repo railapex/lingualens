@@ -26,6 +26,7 @@ pub struct Config {
     pub force_web_speech: bool,    // Skip Kokoro, force Web Speech API for TTS
     pub force_dict_only: bool,     // Skip TranslateGemma, dictionary-only translation
     pub force_clipboard: bool,     // Skip UIA, force clipboard simulation for text capture
+    pub overlay_position_mode: String, // "cursor" or "center"
 }
 
 impl Default for Config {
@@ -46,6 +47,7 @@ impl Default for Config {
             force_web_speech: false,
             force_dict_only: false,
             force_clipboard: false,
+            overlay_position_mode: "cursor".into(),
         }
     }
 }

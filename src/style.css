@@ -57,9 +57,9 @@ html, body {
 
 .overlay {
   position: fixed;
-  top: 50%;
+  top: 12px;
   left: 50%;
-  transform: translate(-50%, -50%) translateY(0);
+  transform: translateX(-50%) translateY(0);
   width: 440px;
   min-height: 110px;
   padding: 18px 24px 14px;
@@ -75,7 +75,7 @@ html, body {
 
 .overlay.hidden {
   opacity: 0;
-  transform: translate(-50%, -50%) translateY(4px);
+  transform: translateX(-50%) translateY(4px);
   pointer-events: none;
 }
 

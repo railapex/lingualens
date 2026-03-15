@@ -391,24 +391,61 @@ fn poll_clipboard_change(seq_before: u32, timeout_ms: u64) -> bool {
 
 // --- macOS text capture ---
 
-/// Get selected text via macOS Accessibility API (AXUIElement).
-/// Requires Accessibility permission in System Settings > Privacy & Security.
 #[cfg(target_os = "macos")]
-fn get_selected_text_accessibility() -> Option<String> {
+type AXUIElementRef = *const std::ffi::c_void;
+#[cfg(target_os = "macos")]
+type AXValueRef = *const std::ffi::c_void;
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct AXCFRange {
+    location: isize,
+    length: isize,
+}
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct AXCGPoint {
+    x: f64,
+    y: f64,
+}
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct AXCGSize {
+    width: f64,
+    height: f64,
+}
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct AXCGRect {
+    origin: AXCGPoint,
+    size: AXCGSize,
+}
+
+#[cfg(target_os = "macos")]
+const K_AX_VALUE_CGRECT_TYPE: i32 = 3;
+#[cfg(target_os = "macos")]
+const K_AX_VALUE_CFRANGE_TYPE: i32 = 4;
+
+/// Return the currently focused UI element via Accessibility API.
+/// Caller owns the returned reference and must CFRelease it.
+#[cfg(target_os = "macos")]
+fn copy_focused_ui_element() -> Option<AXUIElementRef> {
     use core_foundation::base::TCFType;
     use core_foundation::string::CFString;
 
-    // Safety: Core Foundation Accessibility API calls.
-    // All returned CFTypeRefs follow the Copy rule — caller owns them.
-    // We wrap each in a CFType via wrap_under_create_rule so Rust drops = CFRelease.
     unsafe {
-        // 1. System-wide accessibility element
         let system = AXUIElementCreateSystemWide();
         if system.is_null() {
             return None;
         }
 
-        // 2. Get focused application
         let focused_app_attr = CFString::new("AXFocusedApplication");
         let mut focused_app: core_foundation::base::CFTypeRef = std::ptr::null();
         let err = AXUIElementCopyAttributeValue(
@@ -421,7 +458,6 @@ fn get_selected_text_accessibility() -> Option<String> {
             return None;
         }
 
-        // 3. Get focused UI element from that app
         let focused_elem_attr = CFString::new("AXFocusedUIElement");
         let mut focused_elem: core_foundation::base::CFTypeRef = std::ptr::null();
         let err = AXUIElementCopyAttributeValue(
@@ -434,20 +470,32 @@ fn get_selected_text_accessibility() -> Option<String> {
             return None;
         }
 
-        // 4. Get selected text attribute
+        Some(focused_elem as AXUIElementRef)
+    }
+}
+
+/// Get selected text via macOS Accessibility API (AXUIElement).
+/// Requires Accessibility permission in System Settings > Privacy & Security.
+#[cfg(target_os = "macos")]
+fn get_selected_text_accessibility() -> Option<String> {
+    use core_foundation::base::TCFType;
+    use core_foundation::string::CFString;
+
+    unsafe {
+        let focused_elem = copy_focused_ui_element()?;
+
         let selected_text_attr = CFString::new("AXSelectedText");
         let mut selected_text: core_foundation::base::CFTypeRef = std::ptr::null();
         let err = AXUIElementCopyAttributeValue(
-            focused_elem as AXUIElementRef,
+            focused_elem,
             selected_text_attr.as_concrete_TypeRef(),
             &mut selected_text,
         );
-        CFRelease(focused_elem);
+        CFRelease(focused_elem as _);
         if err != 0 || selected_text.is_null() {
             return None;
         }
 
-        // Convert CFStringRef to Rust String — Create rule: we own it, release on drop
         let cf_str: CFString = CFString::wrap_under_create_rule(selected_text as _);
         let result = cf_str.to_string();
 
@@ -460,7 +508,87 @@ fn get_selected_text_accessibility() -> Option<String> {
 }
 
 #[cfg(target_os = "macos")]
-type AXUIElementRef = *const std::ffi::c_void;
+fn get_selected_text_bounds_accessibility() -> Option<[i32; 4]> {
+    use core_foundation::base::TCFType;
+    use core_foundation::string::CFString;
+
+    unsafe {
+        let focused_elem = copy_focused_ui_element()?;
+
+        let selected_range_attr = CFString::new("AXSelectedTextRange");
+        let mut selected_range: core_foundation::base::CFTypeRef = std::ptr::null();
+        let err = AXUIElementCopyAttributeValue(
+            focused_elem,
+            selected_range_attr.as_concrete_TypeRef(),
+            &mut selected_range,
+        );
+        if err != 0 || selected_range.is_null() {
+            CFRelease(focused_elem as _);
+            return None;
+        }
+
+        let mut range = AXCFRange::default();
+        let ok = AXValueGetValue(
+            selected_range as AXValueRef,
+            K_AX_VALUE_CFRANGE_TYPE,
+            &mut range as *mut _ as *mut std::ffi::c_void,
+        );
+        if !ok {
+            CFRelease(selected_range);
+            CFRelease(focused_elem as _);
+            return None;
+        }
+
+        // Zero-length range means caret-only; use a 1-char range to ask for bounds.
+        if range.length <= 0 {
+            range.length = 1;
+        }
+
+        let range_value =
+            AXValueCreate(K_AX_VALUE_CFRANGE_TYPE, &range as *const _ as *const std::ffi::c_void);
+        if range_value.is_null() {
+            CFRelease(selected_range);
+            CFRelease(focused_elem as _);
+            return None;
+        }
+
+        let bounds_attr = CFString::new("AXBoundsForRange");
+        let mut bounds_ref: core_foundation::base::CFTypeRef = std::ptr::null();
+        let err = AXUIElementCopyParameterizedAttributeValue(
+            focused_elem,
+            bounds_attr.as_concrete_TypeRef(),
+            range_value as _,
+            &mut bounds_ref,
+        );
+
+        CFRelease(range_value as _);
+        CFRelease(selected_range);
+        CFRelease(focused_elem as _);
+
+        if err != 0 || bounds_ref.is_null() {
+            return None;
+        }
+
+        let mut rect = AXCGRect::default();
+        let ok = AXValueGetValue(
+            bounds_ref as AXValueRef,
+            K_AX_VALUE_CGRECT_TYPE,
+            &mut rect as *mut _ as *mut std::ffi::c_void,
+        );
+        CFRelease(bounds_ref);
+
+        if !ok || rect.size.width <= 0.0 || rect.size.height <= 0.0 {
+            return None;
+        }
+
+        Some([
+            rect.origin.x.round() as i32,
+            rect.origin.y.round() as i32,
+            rect.size.width.round().max(1.0) as i32,
+            rect.size.height.round().max(1.0) as i32,
+        ])
+    }
+}
 
 #[cfg(target_os = "macos")]
 extern "C" {
@@ -470,6 +598,18 @@ extern "C" {
         attribute: core_foundation::string::CFStringRef,
         value: *mut core_foundation::base::CFTypeRef,
     ) -> i32;
+    fn AXUIElementCopyParameterizedAttributeValue(
+        element: AXUIElementRef,
+        attribute: core_foundation::string::CFStringRef,
+        parameter: core_foundation::base::CFTypeRef,
+        value: *mut core_foundation::base::CFTypeRef,
+    ) -> i32;
+    fn AXValueCreate(the_type: i32, value_ptr: *const std::ffi::c_void) -> AXValueRef;
+    fn AXValueGetValue(
+        value: AXValueRef,
+        the_type: i32,
+        value_ptr: *mut std::ffi::c_void,
+    ) -> bool;
     fn CFRelease(cf: core_foundation::base::CFTypeRef);
 }
 
@@ -834,6 +974,13 @@ fn set_config(
         if let Some(v) = updates.get("force_clipboard").and_then(|v| v.as_bool()) {
             cfg.force_clipboard = v;
         }
+        if let Some(v) = updates.get("overlay_position_mode").and_then(|v| v.as_str()) {
+            cfg.overlay_position_mode = if v.eq_ignore_ascii_case("center") {
+                "center".to_string()
+            } else {
+                "cursor".to_string()
+            };
+        }
         if let Some(v) = updates.get("start_at_login").and_then(|v| v.as_bool()) {
             cfg.start_at_login = v;
         }
@@ -1089,6 +1236,79 @@ fn format_hotkey_display(hotkey: &str) -> String {
         .join("+")
 }
 
+#[cfg(target_os = "macos")]
+fn compute_overlay_window_position_for_selection(
+    selection_bounds: [i32; 4],
+    monitor: Option<[i32; 4]>,
+    window_size: (i32, i32),
+) -> Option<(i32, i32)> {
+    let [sel_x, sel_y, sel_w, sel_h] = selection_bounds;
+    let (win_w, win_h) = window_size;
+
+    // Overlay card is top-anchored in CSS with a small inset.
+    const VERTICAL_GAP: i32 = 10;
+    const OVERLAY_TOP_INSET: i32 = 12;
+
+    // Horizontal placement is stable regardless of coordinate origin assumptions.
+    let mut x = sel_x + (sel_w / 2) - (win_w / 2);
+
+    let ([_cx, _cy, mon_w, mon_h], mon_left, mon_top) = if let Some(m) = monitor {
+        let left = m[0] - (m[2] / 2);
+        let top = m[1] - (m[3] / 2);
+        (m, left, top)
+    } else {
+        // No monitor info: best-effort placement from selection bounds only.
+        let y = sel_y + sel_h + VERTICAL_GAP - OVERLAY_TOP_INSET;
+        return Some((x, y));
+    };
+
+    let clamp_y = |raw_y: i32| {
+        let max_y = (mon_top + mon_h - win_h).max(mon_top);
+        let clamped = raw_y.clamp(mon_top, max_y);
+        (clamped, (clamped - raw_y).abs())
+    };
+
+    let pick_vertical = |selection_top: i32| {
+        let below = selection_top + sel_h + VERTICAL_GAP - OVERLAY_TOP_INSET;
+        let above = selection_top - win_h - VERTICAL_GAP - OVERLAY_TOP_INSET;
+        let preferred = if below + win_h <= mon_top + mon_h { below } else { above };
+        clamp_y(preferred)
+    };
+
+    // AX coordinate conventions vary by source. Score both common interpretations and
+    // choose the one that requires less clamp correction.
+    let (y_top, penalty_top) = pick_vertical(sel_y);
+    let sel_top_flipped = mon_top + mon_h - sel_y - sel_h;
+    let (y_flipped, penalty_flipped) = pick_vertical(sel_top_flipped);
+    let mut y = if penalty_flipped < penalty_top { y_flipped } else { y_top };
+
+    let max_x = (mon_left + mon_w - win_w).max(mon_left);
+    x = x.clamp(mon_left, max_x);
+    y = y.clamp(mon_top, (mon_top + mon_h - win_h).max(mon_top));
+
+    Some((x, y))
+}
+
+#[cfg(target_os = "macos")]
+fn compute_overlay_window_position_for_point(
+    point: (i32, i32),
+    monitor: Option<[i32; 4]>,
+    window_size: (i32, i32),
+) -> Option<(i32, i32)> {
+    compute_overlay_window_position_for_selection([point.0, point.1, 1, 1], monitor, window_size)
+}
+
+#[cfg(target_os = "macos")]
+fn get_cursor_position_macos() -> Option<(i32, i32)> {
+    use core_graphics::event::CGEvent;
+    use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+
+    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState).ok()?;
+    let event = CGEvent::new(source).ok()?;
+    let point = event.location();
+    Some((point.x.round() as i32, point.y.round() as i32))
+}
+
 fn open_or_focus_window(app: &tauri::AppHandle, label: &str, title: &str, url: &str, width: f64, height: f64) {
     use tauri::WebviewWindowBuilder;
     if let Some(win) = app.get_webview_window(label) {
@@ -1154,6 +1374,22 @@ fn register_hotkey(app_handle: &tauri::AppHandle, shortcut: &str) -> Result<(), 
             // Move ALL work off the main thread to prevent "Not Responding".
             // Text capture (UIA/clipboard, up to 550ms) must not block the message pump.
             std::thread::spawn(move || {
+                let runtime_cfg = config::get();
+                let center_overlay = runtime_cfg.overlay_position_mode.eq_ignore_ascii_case("center");
+
+                #[cfg(target_os = "macos")]
+                let selection_bounds = if !center_overlay && !runtime_cfg.force_clipboard {
+                    get_selected_text_bounds_accessibility()
+                } else {
+                    None
+                };
+                #[cfg(target_os = "macos")]
+                let cursor_pos = if center_overlay {
+                    None
+                } else {
+                    get_cursor_position_macos()
+                };
+
                 let text = get_selected_text().unwrap_or_default();
                 let text = text.trim().to_string();
                 log::info!("[hotkey] captured text: {:?}", &text[..text.len().min(50)]);
@@ -1161,14 +1397,86 @@ fn register_hotkey(app_handle: &tauri::AppHandle, shortcut: &str) -> Result<(), 
                 let monitor = get_active_monitor_center().ok();
 
                 if let Some(window) = h.get_webview_window("main") {
-                    if let Some([cx, cy, _, _]) = monitor {
-                        if let Ok(size) = window.inner_size() {
-                            let x = cx - (size.width as i32 / 2);
-                            let y = cy - (size.height as i32 / 2);
-                            let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
+                    if let Ok(size) = window.inner_size() {
+                        #[cfg(target_os = "macos")]
+                        let logical_size = {
+                            let scale = window.scale_factor().unwrap_or(1.0).max(1.0);
+                            (
+                                ((size.width as f64) / scale).round() as i32,
+                                ((size.height as f64) / scale).round() as i32,
+                            )
+                        };
+
+                        #[cfg(not(target_os = "macos"))]
+                        let logical_size = (size.width as i32, size.height as i32);
+
+                        let mut desired_position: Option<(i32, i32)> = None;
+
+                        #[cfg(target_os = "macos")]
+                        {
+                            if center_overlay {
+                                log::info!("[hotkey] overlay_position_mode=center");
+                            } else if let Some(bounds) = selection_bounds {
+                                log::info!("[hotkey] AX selection bounds: {:?}", bounds);
+                                desired_position =
+                                    compute_overlay_window_position_for_selection(bounds, None, logical_size);
+                            } else if let Some(point) = cursor_pos {
+                                log::warn!(
+                                    "[hotkey] AX bounds unavailable; falling back to cursor point: {:?}",
+                                    point
+                                );
+                                desired_position =
+                                    compute_overlay_window_position_for_point(point, None, logical_size);
+                            } else {
+                                log::warn!("[hotkey] AX bounds + cursor unavailable; centering overlay");
+                            }
+                        }
+
+                        #[cfg(not(target_os = "macos"))]
+                        {
+                            if let Some([cx, cy, _, _]) = monitor {
+                                desired_position = Some((
+                                    cx - (logical_size.0 / 2),
+                                    cy - (logical_size.1 / 2),
+                                ));
+                            }
+                        }
+
+                        // Show first on macOS, then apply position to ensure updates while hidden windows.
+                        if let Err(e) = window.show() {
+                            log::warn!("[hotkey] show failed: {e}");
+                        }
+
+                        if desired_position.is_none() {
+                            if let Some([cx, cy, _, _]) = monitor {
+                                desired_position = Some((
+                                    cx - (logical_size.0 / 2),
+                                    cy - (logical_size.1 / 2),
+                                ));
+                            }
+                        }
+
+                        if let Some((x, y)) = desired_position {
+                            log::info!("[hotkey] positioning overlay at ({x}, {y})");
+                            #[cfg(target_os = "macos")]
+                            {
+                                if let Err(e) = window.set_position(tauri::Position::Logical(
+                                    tauri::LogicalPosition::new(x as f64, y as f64),
+                                )) {
+                                    log::warn!("[hotkey] set_position failed: {e}");
+                                }
+                            }
+
+                            #[cfg(not(target_os = "macos"))]
+                            {
+                                if let Err(e) =
+                                    window.set_position(tauri::PhysicalPosition::new(x, y))
+                                {
+                                    log::warn!("[hotkey] set_position failed: {e}");
+                                }
+                            }
                         }
                     }
-                    let _ = window.show();
                     let _ = window.set_focus();
                 }
                 if let Err(e) = h.emit("hotkey-text", text) {
@@ -1403,9 +1711,9 @@ pub fn run() {
             // System tray
             setup_tray(app)?;
 
-            // Preload models: dict (CPU, parallel), then TTS (CUDA), then translate (CUDA).
-            // TTS and translate are sequential — both want CUDA, loading simultaneously
-            // can cause context conflicts and GPU fallback to CPU.
+            // Preload models: dict (CPU, parallel), then TTS (GPU), then translate (GPU).
+            // TTS and translate are sequential — loading both accelerators at once can
+            // cause context conflicts and GPU fallback to CPU.
             {
                 let data_dir = data_dir.clone();
                 std::thread::spawn(move || {
