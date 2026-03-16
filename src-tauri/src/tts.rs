@@ -323,9 +323,9 @@ fn init_state(data_dir: &Path) -> Result<std::sync::Mutex<TtsState>, String> {
 
 fn create_session(fp32_path: &Path, q8_path: &Path) -> Result<(Session, String), String> {
     if !crate::config::get().force_cpu && fp32_path.exists() {
-        #[cfg(all(target_os = "macos", feature = "gpu-macos"))]
+        #[cfg(target_os = "macos")]
         {
-            // macOS: prefer CoreML first to avoid unnecessary provider probing latency.
+            // macOS: prefer CoreML to avoid unnecessary provider probing latency.
             let t0 = std::time::Instant::now();
             match Session::builder()
                 .map_err(|e| e.to_string())
@@ -340,7 +340,7 @@ fn create_session(fp32_path: &Path, q8_path: &Path) -> Result<(Session, String),
             }
         }
 
-        #[cfg(all(target_os = "windows", feature = "gpu-windows"))]
+        #[cfg(target_os = "windows")]
         {
             // CUDA attempt
             let t0 = std::time::Instant::now();
@@ -370,12 +370,6 @@ fn create_session(fp32_path: &Path, q8_path: &Path) -> Result<(Session, String),
                 Err(e) => log::warn!("[tts] DirectML failed ({:.0?}): {}", t0.elapsed(), e),
             }
         }
-
-        #[cfg(all(target_os = "macos", not(feature = "gpu-macos")))]
-        log::warn!("[tts] gpu-macos feature disabled; CoreML unavailable");
-
-        #[cfg(all(target_os = "windows", not(feature = "gpu-windows")))]
-        log::warn!("[tts] gpu-windows feature disabled; CUDA/DirectML unavailable");
     }
 
     // CPU fallback

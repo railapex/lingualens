@@ -1,6 +1,6 @@
 [package]
 name = "lingualens"
-version = "0.2.1"
+version = "0.3.0"
 description = "Ambient language learning overlay"
 authors = ["Chris Hynes"]
 license = "MIT"
@@ -47,6 +47,7 @@ windows = { version = "0.61", features = [
     "Win32_System_DataExchange",
     "Win32_System_Memory",
     "Win32_System_Ole",
+    "Win32_System_SystemInformation",
     "Win32_Foundation",
     "Win32_UI_Accessibility",
     "Win32_System_Com",

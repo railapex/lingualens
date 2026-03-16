@@ -3,6 +3,7 @@ use std::process::Command as StdCommand;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::{Emitter, Manager};
 
 pub mod config;
@@ -139,6 +140,82 @@ fn simulate_ctrl_c() {
 }
 
 /// Try to get selected text via UI Automation TextPattern (clipboard-free).
+/// Get bounding rectangle of the text selection via UIA TextPattern.
+/// Returns [x, y, width, height] in screen pixels, or None if unavailable.
+#[cfg(target_os = "windows")]
+fn get_selected_text_bounds_uia() -> Option<[i32; 4]> {
+    use windows::core::Interface;
+    use windows::Win32::System::Com::*;
+    use windows::Win32::UI::Accessibility::*;
+
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+
+        let automation: IUIAutomation = CoCreateInstance(
+            &CUIAutomation8,
+            None,
+            CLSCTX_INPROC_SERVER,
+        )
+        .ok()?;
+
+        let focused = automation.GetFocusedElement().ok()?;
+
+        let text_pattern: IUIAutomationTextPattern =
+            focused.GetCurrentPattern(UIA_TextPatternId).ok()?.cast().ok()?;
+
+        let ranges = text_pattern.GetSelection().ok()?;
+        if ranges.Length().ok()? == 0 {
+            return None;
+        }
+
+        let range = ranges.GetElement(0).ok()?;
+
+        // GetBoundingRectangles returns a SAFEARRAY of f64: [x, y, w, h, x2, y2, w2, h2, ...]
+        // Each group of 4 is one line's bounding rect. We use the first.
+        let rects = range.GetBoundingRectangles().ok()?;
+
+        // SAFEARRAY of doubles
+        let sa = &*rects;
+        let n_elements = if sa.rgsabound[0].cElements > 0 {
+            sa.rgsabound[0].cElements as usize
+        } else {
+            return None;
+        };
+        if n_elements < 4 {
+            return None;
+        }
+
+        let data = sa.pvData as *const f64;
+        let x = (*data.add(0)).round() as i32;
+        let y = (*data.add(1)).round() as i32;
+        let w = (*data.add(2)).round().max(1.0) as i32;
+        let h = (*data.add(3)).round().max(1.0) as i32;
+
+        // Sanity: reject zero-area or clearly bogus rects
+        if w <= 0 || h <= 0 || x < -10000 || y < -10000 {
+            return None;
+        }
+
+        Some([x, y, w, h])
+    }
+}
+
+/// Get current mouse cursor position in screen coordinates.
+#[cfg(target_os = "windows")]
+fn get_cursor_position_windows() -> Option<(i32, i32)> {
+    use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+    use windows::Win32::Foundation::POINT;
+
+    unsafe {
+        let mut pt = POINT::default();
+        if GetCursorPos(&mut pt).is_ok() {
+            Some((pt.x, pt.y))
+        } else {
+            None
+        }
+    }
+}
+
 /// Returns None if the focused element doesn't support TextPattern or has no selection.
 #[cfg(target_os = "windows")]
 fn get_selected_text_uia() -> Option<String> {
@@ -1011,32 +1088,67 @@ mod audio {
             std::thread::spawn(move || {
                 use rodio::{Decoder, OutputStream, Sink};
 
-                let (stream, handle) = match OutputStream::try_default() {
-                    Ok(pair) => pair,
-                    Err(e) => {
-                        log::error!("[audio] Failed to open output device: {e}");
-                        return;
+                // Recreatable output stream — survives device changes (sleep/wake, USB DAC replug).
+                let open_device = || -> Option<(OutputStream, Sink)> {
+                    match OutputStream::try_default() {
+                        Ok((stream, handle)) => {
+                            match Sink::try_new(&handle) {
+                                Ok(sink) => Some((stream, sink)),
+                                Err(e) => {
+                                    log::error!("[audio] Sink creation failed: {e}");
+                                    None
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("[audio] Failed to open output device: {e}");
+                            None
+                        }
                     }
                 };
-                let sink = Sink::try_new(&handle).unwrap();
+
+                let mut stream_pair = open_device();
 
                 for msg in rx {
                     match msg {
                         AudioMsg::Play(wav_bytes) => {
-                            sink.stop();
-                            match Decoder::new(Cursor::new(wav_bytes)) {
-                                Ok(source) => sink.append(source),
-                                Err(e) => log::warn!("[audio] Failed to decode WAV: {e}"),
+                            // Try current stream first; reopen on failure
+                            let mut played = false;
+                            for attempt in 0..2 {
+                                if let Some((ref _stream, ref sink)) = stream_pair {
+                                    sink.stop();
+                                    match Decoder::new(Cursor::new(wav_bytes.clone())) {
+                                        Ok(source) => {
+                                            sink.append(source);
+                                            // Check if the stream is still alive after appending
+                                            // (rodio won't error on append, but the device error
+                                            // shows up on the output stream callback)
+                                            played = true;
+                                            break;
+                                        }
+                                        Err(e) => {
+                                            log::warn!("[audio] Failed to decode WAV: {e}");
+                                            played = true; // decode error, not device error
+                                            break;
+                                        }
+                                    }
+                                }
+                                if attempt == 0 {
+                                    log::info!("[audio] Reopening output device...");
+                                    stream_pair = open_device();
+                                }
+                            }
+                            if !played {
+                                log::warn!("[audio] Playback unavailable — no output device");
                             }
                         }
                         AudioMsg::Stop => {
-                            sink.stop();
+                            if let Some((ref _stream, ref sink)) = stream_pair {
+                                sink.stop();
+                            }
                         }
                     }
                 }
-
-                // Keep stream alive until channel closes
-                drop(stream);
             });
             Mutex::new(tx)
         })
@@ -1309,6 +1421,130 @@ fn get_cursor_position_macos() -> Option<(i32, i32)> {
     Some((point.x.round() as i32, point.y.round() as i32))
 }
 
+/// Position overlay near a selection or point on Windows.
+/// monitor format: [center_x, center_y, width, height] (from get_active_monitor_center).
+/// selection_bounds: [x, y, width, height] in screen pixels.
+/// Window coordinates on Windows are physical pixels, origin top-left.
+#[cfg(target_os = "windows")]
+fn compute_overlay_position_windows(
+    selection_bounds: [i32; 4],
+    monitor: Option<[i32; 4]>,
+    window_size: (i32, i32),
+) -> (i32, i32) {
+    let [sel_x, sel_y, sel_w, sel_h] = selection_bounds;
+    let (win_w, win_h) = window_size;
+
+    // CSS has overlay card at top:12px inside the window.
+    const VERTICAL_GAP: i32 = 10;
+    const OVERLAY_TOP_INSET: i32 = 12;
+
+    // Center window horizontally on selection
+    let mut x = sel_x + (sel_w / 2) - (win_w / 2);
+
+    // Place below selection; if that clips the monitor bottom, place above.
+    let mut y = sel_y + sel_h + VERTICAL_GAP - OVERLAY_TOP_INSET;
+
+    if let Some([cx, cy, mon_w, mon_h]) = monitor {
+        let mon_left = cx - (mon_w / 2);
+        let mon_top = cy - (mon_h / 2);
+        let mon_right = mon_left + mon_w;
+        let mon_bottom = mon_top + mon_h;
+
+        // If below placement clips, try above
+        if y + win_h > mon_bottom {
+            let above = sel_y - win_h - VERTICAL_GAP + OVERLAY_TOP_INSET;
+            if above >= mon_top {
+                y = above;
+            }
+            // else: keep below, clamped
+        }
+
+        // Clamp to monitor bounds
+        x = x.clamp(mon_left, (mon_right - win_w).max(mon_left));
+        y = y.clamp(mon_top, (mon_bottom - win_h).max(mon_top));
+    }
+
+    (x, y)
+}
+
+/// Cumulative sleep time (ms) as of the last hotkey press.
+/// GetTickCount64 includes sleep; QueryUnbiasedInterruptTime excludes it.
+/// Delta = how long the system has spent asleep since boot.
+/// If the delta grows between presses, the machine slept.
+#[cfg(target_os = "windows")]
+static LAST_SLEEP_DEBT_MS: AtomicU64 = AtomicU64::new(0);
+
+/// Returns cumulative milliseconds the system has spent asleep since boot.
+/// GetTickCount64 includes sleep time; QueryUnbiasedInterruptTime excludes it.
+#[cfg(target_os = "windows")]
+fn system_sleep_debt_ms() -> u64 {
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn QueryUnbiasedInterruptTime(unbiased_time: *mut u64) -> i32;
+    }
+    unsafe {
+        let biased = windows::Win32::System::SystemInformation::GetTickCount64();
+        let mut unbiased: u64 = 0;
+        QueryUnbiasedInterruptTime(&mut unbiased);
+        let unbiased_ms = unbiased / 10_000; // 100ns units → ms
+        biased.saturating_sub(unbiased_ms)
+    }
+}
+
+/// Returns true if the system slept since the last call.
+#[cfg(target_os = "windows")]
+fn did_system_sleep() -> bool {
+    let current = system_sleep_debt_ms();
+    let prev = LAST_SLEEP_DEBT_MS.swap(current, Ordering::Relaxed);
+    let slept = prev > 0 && current > prev + 1000;
+    if slept {
+        let new_sleep_secs = (current - prev) / 1000;
+        log::info!(
+            "[power] Sleep detected: {}s new sleep (total debt: {}s)",
+            new_sleep_secs,
+            current / 1000
+        );
+    }
+    slept
+}
+
+/// Recreate the main overlay window with the same config as tauri.conf.json.
+/// Returns the new window handle.
+fn recreate_overlay_window(app: &tauri::AppHandle) -> Option<tauri::WebviewWindow> {
+    use tauri::WebviewWindowBuilder;
+
+    if let Some(old) = app.get_webview_window("main") {
+        log::info!("[overlay] Destroying stale window for DWM refresh");
+        let _ = old.destroy();
+    }
+
+    // Brief yield to let the old window's resources release
+    std::thread::sleep(std::time::Duration::from_millis(50));
+
+    match WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("index.html".into()))
+        .title("LinguaLens")
+        .inner_size(500.0, 280.0)
+        .resizable(false)
+        .decorations(false)
+        .transparent(true)
+        .shadow(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .visible(false)
+        .center()
+        .build()
+    {
+        Ok(win) => {
+            log::info!("[overlay] Window recreated with fresh DWM surface");
+            Some(win)
+        }
+        Err(e) => {
+            log::error!("[overlay] Window recreation failed: {e}");
+            None
+        }
+    }
+}
+
 fn open_or_focus_window(app: &tauri::AppHandle, label: &str, title: &str, url: &str, width: f64, height: f64) {
     use tauri::WebviewWindowBuilder;
     if let Some(win) = app.get_webview_window(label) {
@@ -1377,6 +1613,8 @@ fn register_hotkey(app_handle: &tauri::AppHandle, shortcut: &str) -> Result<(), 
                 let runtime_cfg = config::get();
                 let center_overlay = runtime_cfg.overlay_position_mode.eq_ignore_ascii_case("center");
 
+                // Capture selection bounds BEFORE text capture (text capture may
+                // simulate Ctrl+C which moves focus/selection).
                 #[cfg(target_os = "macos")]
                 let selection_bounds = if !center_overlay && !runtime_cfg.force_clipboard {
                     get_selected_text_bounds_accessibility()
@@ -1390,11 +1628,32 @@ fn register_hotkey(app_handle: &tauri::AppHandle, shortcut: &str) -> Result<(), 
                     get_cursor_position_macos()
                 };
 
+                #[cfg(target_os = "windows")]
+                let selection_bounds = if !center_overlay && !runtime_cfg.force_clipboard {
+                    get_selected_text_bounds_uia()
+                } else {
+                    None
+                };
+                #[cfg(target_os = "windows")]
+                let cursor_pos = if center_overlay {
+                    None
+                } else {
+                    get_cursor_position_windows()
+                };
+
                 let text = get_selected_text().unwrap_or_default();
                 let text = text.trim().to_string();
                 log::info!("[hotkey] captured text: {:?}", &text[..text.len().min(50)]);
 
                 let monitor = get_active_monitor_center().ok();
+
+                // Detect system sleep and recreate overlay window for fresh DWM surface.
+                // Only fires when the machine actually slept — zero false positives.
+                #[cfg(target_os = "windows")]
+                if did_system_sleep() {
+                    log::info!("[hotkey] System woke from sleep — recreating overlay window");
+                    recreate_overlay_window(&h);
+                }
 
                 if let Some(window) = h.get_webview_window("main") {
                     if let Ok(size) = window.inner_size() {
@@ -1419,30 +1678,41 @@ fn register_hotkey(app_handle: &tauri::AppHandle, shortcut: &str) -> Result<(), 
                             } else if let Some(bounds) = selection_bounds {
                                 log::info!("[hotkey] AX selection bounds: {:?}", bounds);
                                 desired_position =
-                                    compute_overlay_window_position_for_selection(bounds, None, logical_size);
+                                    compute_overlay_window_position_for_selection(bounds, monitor, logical_size);
                             } else if let Some(point) = cursor_pos {
                                 log::warn!(
                                     "[hotkey] AX bounds unavailable; falling back to cursor point: {:?}",
                                     point
                                 );
                                 desired_position =
-                                    compute_overlay_window_position_for_point(point, None, logical_size);
+                                    compute_overlay_window_position_for_point(point, monitor, logical_size);
                             } else {
                                 log::warn!("[hotkey] AX bounds + cursor unavailable; centering overlay");
                             }
                         }
 
-                        #[cfg(not(target_os = "macos"))]
+                        #[cfg(target_os = "windows")]
                         {
-                            if let Some([cx, cy, _, _]) = monitor {
-                                desired_position = Some((
-                                    cx - (logical_size.0 / 2),
-                                    cy - (logical_size.1 / 2),
-                                ));
+                            if center_overlay {
+                                log::info!("[hotkey] overlay_position_mode=center");
+                            } else if let Some(bounds) = selection_bounds {
+                                log::info!("[hotkey] UIA selection bounds: {:?}", bounds);
+                                desired_position = Some(
+                                    compute_overlay_position_windows(bounds, monitor, logical_size)
+                                );
+                            } else if let Some(point) = cursor_pos {
+                                log::info!("[hotkey] UIA bounds unavailable; using cursor: {:?}", point);
+                                desired_position = Some(
+                                    compute_overlay_position_windows([point.0, point.1, 1, 1], monitor, logical_size)
+                                );
+                            } else {
+                                log::info!("[hotkey] No selection bounds or cursor; centering");
                             }
                         }
 
-                        // Show first on macOS, then apply position to ensure updates while hidden windows.
+                        // macOS: show first, then position (transparent window quirk).
+                        // Windows: position first, then show (avoids flicker at old position).
+                        #[cfg(target_os = "macos")]
                         if let Err(e) = window.show() {
                             log::warn!("[hotkey] show failed: {e}");
                         }
@@ -1475,6 +1745,11 @@ fn register_hotkey(app_handle: &tauri::AppHandle, shortcut: &str) -> Result<(), 
                                     log::warn!("[hotkey] set_position failed: {e}");
                                 }
                             }
+                        }
+
+                        #[cfg(not(target_os = "macos"))]
+                        if let Err(e) = window.show() {
+                            log::warn!("[hotkey] show failed: {e}");
                         }
                     }
                     let _ = window.set_focus();
