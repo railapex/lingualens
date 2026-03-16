@@ -18,13 +18,15 @@ pub struct Config {
     pub tts_voice_native: Option<String>,
     pub hotkey: String,
 
-    pub start_with_windows: bool,
+    #[serde(alias = "start_with_windows")]
+    pub start_at_login: bool,
 
     // Dev/testing overrides (default: false = use best available)
     pub force_cpu: bool,           // Skip CUDA/DirectML, force CPU inference
     pub force_web_speech: bool,    // Skip Kokoro, force Web Speech API for TTS
     pub force_dict_only: bool,     // Skip TranslateGemma, dictionary-only translation
     pub force_clipboard: bool,     // Skip UIA, force clipboard simulation for text capture
+    pub overlay_position_mode: String, // "cursor" or "center"
 }
 
 impl Default for Config {
@@ -40,11 +42,12 @@ impl Default for Config {
             tts_voice_target: None,
             tts_voice_native: None,
             hotkey: "ctrl+alt+l".into(),
-            start_with_windows: false,
+            start_at_login: false,
             force_cpu: false,
             force_web_speech: false,
             force_dict_only: false,
             force_clipboard: false,
+            overlay_position_mode: "cursor".into(),
         }
     }
 }

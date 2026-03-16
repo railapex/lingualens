@@ -73,10 +73,15 @@ fn ensure_loaded(data_dir: &Path) -> Result<(), String> {
     // GPU offload: all layers to primary GPU for ~10x speedup
     // force_cpu=true → 0 GPU layers (CPU-only inference, requires restart to change)
     let gpu_layers = if crate::config::get().force_cpu { 0 } else { 999 };
-    let model_params = pin!(LlamaModelParams::default()
+    let mut params = LlamaModelParams::default()
         .with_n_gpu_layers(gpu_layers)
-        .with_split_mode(llama_cpp_2::model::params::LlamaSplitMode::None)
-        .with_main_gpu(0));
+        .with_split_mode(llama_cpp_2::model::params::LlamaSplitMode::None);
+    // Only set main_gpu when GPU layers are requested — with_main_gpu(0) is invalid
+    // when no GPU backend is compiled in (0 available devices).
+    if gpu_layers > 0 {
+        params = params.with_main_gpu(0);
+    }
+    let model_params = pin!(params);
 
     let t0 = std::time::Instant::now();
     let model = LlamaModel::load_from_file(&backend, &model_path, &model_params)
@@ -265,8 +270,13 @@ mod tests {
     use std::path::PathBuf;
 
     fn model_dir() -> PathBuf {
-        let appdata = std::env::var("APPDATA").expect("APPDATA not set");
-        PathBuf::from(appdata).join("com.lingualens.app")
+        if cfg!(target_os = "windows") {
+            let appdata = std::env::var("APPDATA").expect("APPDATA not set");
+            PathBuf::from(appdata).join("com.lingualens.app")
+        } else {
+            PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/tmp".into()))
+                .join("Library/Application Support/com.lingualens.app")
+        }
     }
 
     fn require_model() -> bool {

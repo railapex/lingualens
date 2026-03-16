@@ -4,7 +4,8 @@ import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const ttsCli = resolve(__dirname, 'src-tauri/target/debug/tts_cli.exe');
+const isWindows = process.platform === 'win32';
+const ttsCli = resolve(__dirname, `src-tauri/target/debug/tts_cli${isWindows ? '.exe' : ''}`);
 
 export default defineConfig({
   root: 'src',
@@ -36,8 +37,11 @@ export default defineConfig({
           return;
         }
         try {
+          const espeakBin = isWindows
+            ? 'C:/Program Files/eSpeak NG/espeak-ng.exe'
+            : (process.arch === 'arm64' ? '/opt/homebrew/bin/espeak-ng' : '/usr/local/bin/espeak-ng');
           const ipa = execFileSync(
-            'C:/Program Files/eSpeak NG/espeak-ng.exe',
+            espeakBin,
             ['-v', lang, '--ipa', '-q', text],
             { encoding: 'utf-8' },
           ).trim();

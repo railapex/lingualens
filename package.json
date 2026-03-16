@@ -1,12 +1,14 @@
 {
   "name": "lingualens",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "private": true,
   "description": "Ambient language learning overlay",
   "scripts": {
     "tauri": "tauri",
-    "dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
-    "build": "tauri build",
+    "dev": "node scripts/tauri-with-gpu.mjs dev --config src-tauri/tauri.dev.conf.json",
+    "build": "node scripts/tauri-with-gpu.mjs build",
+    "dev:cpu": "tauri dev --config src-tauri/tauri.dev.conf.json",
+    "build:cpu": "tauri build",
     "vite:dev": "vite",
     "vite:build": "vite build",
     "download-models": "node scripts/download-models.mjs"

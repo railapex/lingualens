@@ -1,5 +1,52 @@
 # Changelog
 
+## v0.3.0 (unreleased)
+
+macOS port, selection-anchored overlay, and resilience improvements.
+
+### Added
+
+- **macOS text capture** — two-tier: Accessibility API (AXUIElement, clipboard-free) → Cmd+C simulation via CGEvent with pasteboard save/restore
+- **macOS monitor detection** — CGDisplay API for overlay positioning
+- **macOS espeak-ng paths** — Homebrew ARM (`/opt/homebrew`) and Intel (`/usr/local`) fallback
+- **CoreML TTS** — GPU cascade: CoreML on macOS, CUDA → DirectML on Windows, CPU fallback
+- **Metal translation** — `llama-cpp-2/metal` feature flag, same `with_n_gpu_layers(999)` API as CUDA
+- **Target-conditional GPU deps** — CUDA + DirectML on Windows, Metal + CoreML on macOS, automatic per platform (no feature flags needed)
+- **Selection-anchored overlay (Windows)** — UIA `GetBoundingRectangles` positions overlay below selected text; falls back to cursor position → monitor center
+- **Selection-anchored overlay (macOS)** — AX `AXBoundsForRange` positions overlay near selection; CGEvent cursor fallback
+- **Overlay position setting** — "Near selection/cursor" (default) or "Center of monitor" in Settings > Display
+- **Sleep/wake recovery (Windows)** — detects system sleep via biased vs unbiased interrupt time (`GetTickCount64` vs `QueryUnbiasedInterruptTime`); recreates overlay window for fresh DWM composition surface
+- **Audio device recovery** — rodio output stream reopens on failure (survives sleep/wake, USB DAC unplug)
+- **CI validation workflow** — `cargo check` + `cargo test` + frontend build on Windows + macOS for PRs and pushes
+- **CI matrix build** — Windows + macOS runners, per-platform manifest generation with merge job
+- **DMG bundle target** — `"targets": "all"` in tauri.conf.json, `macOS.minimumSystemVersion: "12.0"`
+- **Info.plist** — `NSAccessibilityUsageDescription` for Accessibility permission prompt
+- **On-platform validation plan** — `docs/plan-macos-onplatform.md` for Mac-side testing and completion
+- **GPU auto-detection script** — `scripts/tauri-with-gpu.mjs` injects `--features gpu-*` only when Cargo.toml defines them; transparent passthrough otherwise
+
+### Changed
+
+- **Audio playback** — replaced Windows-only `winmm PlaySoundW` with cross-platform `rodio` crate (dedicated audio thread, channel-based architecture)
+- **Overlay CSS** — card anchored at `top: 12px` instead of vertically centered; window positioning controls placement
+- **Window show/position order** — macOS: show then position (DWM quirk); Windows: position then show (no flicker)
+- **Config field rename** — `start_with_windows` → `start_at_login` with `#[serde(alias)]` for migration
+- **Settings UI** — "Start with Windows" → "Start at login"
+- **Dev tooling** — `vite.config.js` and `scripts/download-models.mjs` now platform-aware (binary extensions, model paths)
+- **Test data dirs** — `tts.rs`, `translate.rs`, `tts_cli.rs` test helpers resolve to `~/Library/Application Support/` on macOS
+- **TTS GPU cascade** — uses `#[cfg(target_os)]` instead of feature flags; platform providers tried first to avoid probe latency
+
+### Fixed
+
+- **TTS GPU dead code** — PR #1 gated CUDA/DirectML behind `#[cfg(feature = "gpu-windows")]` which doesn't exist; replaced with `#[cfg(target_os = "windows")]`
+- **Monitor clamping** — overlay position functions were called with `None` instead of actual monitor data; selection near screen edges could go off-screen
+- **tauri-with-gpu.mjs spawn on Windows** — `npx.cmd` + passthrough args caused `EINVAL`; fixed with `shell: true`
+
+### Dependencies
+
+- Added: `rodio 0.19`, `core-graphics 0.24` (macOS), `core-foundation 0.10` (macOS)
+- Added: `Win32_System_SystemInformation` feature for sleep detection
+- GPU features now target-conditional: `llama-cpp-2/cuda` + `ort/cuda` + `ort/directml` on Windows, `llama-cpp-2/metal` + `ort/coreml` on macOS
+
 ## v0.2.1 (unreleased)
 
 CI: cache Cargo registry/target, npm, and CUDA toolkit — cuts release builds from ~96min to ~15min.

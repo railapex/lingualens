@@ -1,6 +1,6 @@
 [package]
 name = "lingualens"
-version = "0.2.1"
+version = "0.3.0"
 description = "Ambient language learning overlay"
 authors = ["Chris Hynes"]
 license = "MIT"
@@ -19,23 +19,27 @@ tauri-build = { version = "2.5.6", features = [] }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
-tauri = { version = "2.10.3", features = ["tray-icon"] }
+tauri = { version = "2.10.3", features = ["macos-private-api", "tray-icon"] }
 tauri-plugin-log = "2"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-autostart = "2"
-llama-cpp-2 = { version = "0.1", features = ["cuda"] }
+llama-cpp-2 = "0.1"
 # CUDA 13.1 + VS 2026: requires CUDAFLAGS="--allow-unsupported-compiler" at build time
 encoding_rs = "0.8"
 whatlang = "0.16"
-ort = { version = "2.0.0-rc.12", features = ["download-binaries", "cuda", "directml"] }
+ort = { version = "2.0.0-rc.12", features = ["download-binaries"] }
 hound = "3.5"
 rusqlite = { version = "0.31", features = ["bundled"] }
 reqwest = { version = "0.12", features = ["stream"] }
 futures-util = "0.3"
 tokio = { version = "1", features = ["fs"] }
+rodio = "0.19"
 
+# GPU acceleration — target-conditional so dev builds get the right backend automatically
 [target.'cfg(windows)'.dependencies]
+llama-cpp-2 = { version = "0.1", features = ["cuda"] }
+ort = { version = "2.0.0-rc.12", features = ["download-binaries", "cuda", "directml"] }
 windows = { version = "0.61", features = [
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
@@ -43,7 +47,14 @@ windows = { version = "0.61", features = [
     "Win32_System_DataExchange",
     "Win32_System_Memory",
     "Win32_System_Ole",
+    "Win32_System_SystemInformation",
     "Win32_Foundation",
     "Win32_UI_Accessibility",
     "Win32_System_Com",
 ] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+llama-cpp-2 = { version = "0.1", features = ["metal"] }
+ort = { version = "2.0.0-rc.12", features = ["download-binaries", "coreml"] }
+core-graphics = "0.24"
+core-foundation = "0.10"

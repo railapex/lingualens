@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  push:
+    branches: [main, macos-port]
+  pull_request:
+    branches: [main, macos-port]
+
+jobs:
+  ci:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+          - os: macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.os == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      # Windows-only: CUDA toolkit
+      - if: matrix.os == 'windows-latest'
+        uses: Jimver/cuda-toolkit@v0.2.23
+        with:
+          cuda: '12.6.0'
+          method: 'network'
+          use-github-cache: true
+          use-local-cache: false
+
+      - name: Cache Cargo registry + build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          cache-on-failure: true
+
+      # Windows: install espeak-ng via choco
+      - if: matrix.os == 'windows-latest'
+        name: Install espeak-ng (Windows)
+        shell: pwsh
+        run: choco install espeak-ng -y --no-progress
+
+      # macOS: install espeak-ng via brew
+      - if: matrix.os == 'macos-latest'
+        name: Install espeak-ng (macOS)
+        run: brew install espeak-ng
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Copy espeak-ng resources
+        shell: bash
+        run: |
+          mkdir -p src-tauri/resources/espeak-ng
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            ESPEAK_DIR="C:/Program Files/eSpeak NG"
+            cp "$ESPEAK_DIR/espeak-ng.exe" src-tauri/resources/espeak-ng/
+            cp "$ESPEAK_DIR/libespeak-ng.dll" src-tauri/resources/espeak-ng/
+            cp -r "$ESPEAK_DIR/espeak-ng-data" src-tauri/resources/espeak-ng/
+          else
+            # macOS — Homebrew installs to /opt/homebrew (ARM) or /usr/local (Intel)
+            if [[ -f /opt/homebrew/bin/espeak-ng ]]; then
+              ESPEAK_BIN=/opt/homebrew/bin/espeak-ng
+              ESPEAK_DATA=/opt/homebrew/share/espeak-ng-data
+            else
+              ESPEAK_BIN=/usr/local/bin/espeak-ng
+              ESPEAK_DATA=/usr/local/share/espeak-ng-data
+            fi
+            cp "$ESPEAK_BIN" src-tauri/resources/espeak-ng/
+            cp -r "$ESPEAK_DATA" src-tauri/resources/espeak-ng/
+          fi
+
+      - name: cargo check
+        working-directory: src-tauri
+        shell: bash
+        run: cargo check
+        env:
+          CUDAFLAGS: ${{ matrix.os == 'windows-latest' && '--allow-unsupported-compiler' || '' }}
+
+      - name: cargo test
+        working-directory: src-tauri
+        shell: bash
+        run: cargo test
+        env:
+          CUDAFLAGS: ${{ matrix.os == 'windows-latest' && '--allow-unsupported-compiler' || '' }}
+
+      - name: Frontend build
+        run: npm run vite:build

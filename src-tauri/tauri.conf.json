@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "LinguaLens",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "identifier": "com.lingualens.app",
   "build": {
     "frontendDist": "../dist",
@@ -10,6 +10,7 @@
     "beforeBuildCommand": "npm run vite:build"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "main",
@@ -32,7 +33,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": "all",
     "resources": {
       "resources/espeak-ng/": "resources/espeak-ng/",
       "resources/dict/": "resources/dict/"
@@ -49,6 +50,9 @@
         "installMode": "currentUser",
         "displayLanguageSelector": false
       }
+    },
+    "macOS": {
+      "minimumSystemVersion": "12.0"
     }
   },
   "plugins": {
