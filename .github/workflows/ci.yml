@@ -75,6 +75,7 @@ jobs:
               ESPEAK_DATA=/usr/local/share/espeak-ng-data
             fi
             cp "$ESPEAK_BIN" src-tauri/resources/espeak-ng/
+            chmod +x src-tauri/resources/espeak-ng/espeak-ng
             cp -r "$ESPEAK_DATA" src-tauri/resources/espeak-ng/
           fi
 
@@ -88,7 +89,11 @@ jobs:
       - name: cargo test
         working-directory: src-tauri
         shell: bash
-        run: cargo test
+        run: |
+          # ort downloads native DLLs (onnxruntime, DirectML) into target/debug/ at build time.
+          # Test binaries live in target/debug/deps/ and need the DLLs on PATH.
+          export PATH="$PWD/target/debug:$PATH"
+          cargo test
         env:
           CUDAFLAGS: ${{ matrix.os == 'windows-latest' && '--allow-unsupported-compiler' || '' }}
 
