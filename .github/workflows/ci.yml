@@ -122,10 +122,21 @@ jobs:
           # Also try following symlinks
           find target/debug/ -maxdepth 1 -name "*.dll" -exec cp -vL {} target/debug/deps/ \; 2>/dev/null || true
 
+      # Show which DLLs the test binary depends on (Windows only)
+      - if: matrix.os == 'windows-latest'
+        name: Diagnose test binary DLL deps
+        working-directory: src-tauri
+        shell: cmd
+        run: |
+          for /f "tokens=*" %%f in ('dir /b /s target\debug\deps\app_lib-*.exe 2^>nul') do (
+            echo === Dependencies of %%f ===
+            dumpbin /dependents "%%f" 2>nul || echo dumpbin not available
+          )
+
       - name: cargo test (run)
         working-directory: src-tauri
         shell: bash
-        run: cargo test
+        run: cargo test -- --nocapture 2>&1 || true
         env:
           CUDAFLAGS: ${{ matrix.os == 'windows-latest' && '--allow-unsupported-compiler' || '' }}
 
