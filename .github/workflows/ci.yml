@@ -93,6 +93,15 @@ jobs:
         env:
           CUDAFLAGS: ${{ matrix.os == 'windows-latest' && '--allow-unsupported-compiler' || '' }}
 
+      # Build tests first (compiles + links), then copy DLLs, then run.
+      # cargo test --no-run builds without executing; cargo test then skips rebuild.
+      - name: cargo test (build)
+        working-directory: src-tauri
+        shell: bash
+        run: cargo test --no-run
+        env:
+          CUDAFLAGS: ${{ matrix.os == 'windows-latest' && '--allow-unsupported-compiler' || '' }}
+
       # Windows: ort downloads native DLLs (onnxruntime, DirectML) into target/debug/
       # at build time, but test binaries run from target/debug/deps/. Windows resolves
       # DLLs from the .exe directory at load time (before PATH), so we copy them over.
@@ -102,7 +111,7 @@ jobs:
         shell: bash
         run: cp target/debug/*.dll target/debug/deps/ 2>/dev/null || true
 
-      - name: cargo test
+      - name: cargo test (run)
         working-directory: src-tauri
         shell: bash
         run: cargo test
