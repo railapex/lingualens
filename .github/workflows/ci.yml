@@ -82,8 +82,10 @@ jobs:
               ESPEAK_DATA=/usr/local/share/espeak-ng-data
             fi
             cp "$ESPEAK_BIN" src-tauri/resources/espeak-ng/
-            chmod +x src-tauri/resources/espeak-ng/espeak-ng
             cp -r "$ESPEAK_DATA" src-tauri/resources/espeak-ng/
+            # Homebrew files may have restricted permissions; Tauri's build script
+            # needs to read all bundled resources
+            chmod -R u+rw src-tauri/resources/espeak-ng/
           fi
 
       - name: cargo check
@@ -103,12 +105,16 @@ jobs:
       # Windows: the compiled binary has hard PE imports for nvcuda.dll, cublas64_13.dll,
       # directml.dll etc. (from ort's target-conditional CUDA/DirectML features).
       # These DLLs don't exist on CI runners (no GPU driver). The test binary can't even
-      # load. cargo check validates all type/borrow/lifetime checks; we skip test execution.
-      # Tests run locally where GPU drivers are present.
+      # load — STATUS_DLL_NOT_FOUND at process start before any test code runs.
+      # cargo test --no-run validates that tests compile and link successfully.
+      # Actual test execution happens on macOS CI (no GPU DLL issue) and locally on Windows.
       - if: matrix.os == 'windows-latest'
-        name: cargo test (skipped — no GPU drivers in CI)
+        name: cargo test --no-run (build-only — no GPU drivers in CI)
+        working-directory: src-tauri
         shell: bash
-        run: echo "Windows tests require CUDA/DirectML drivers; validated by cargo check + macOS tests"
+        run: cargo test --no-run
+        env:
+          CUDAFLAGS: '--allow-unsupported-compiler'
 
       - name: Frontend build
         run: npm run vite:build
