@@ -349,7 +349,7 @@ mod tests {
     fn test_prompt_format() {
         let prompt = build_prompt("buenos dias", "es", "en");
         assert!(prompt.starts_with("<start_of_turn>user\n"));
-        assert!(prompt.contains("from Spanish to English"));
+        assert!(prompt.contains("Spanish (es) to English (en)"));
         assert!(prompt.contains("buenos dias<end_of_turn>"));
         assert!(prompt.ends_with("<start_of_turn>model\n"));
     }

@@ -21,18 +21,68 @@ static ESPEAK_DATA: OnceLock<PathBuf> = OnceLock::new();
 static DICT_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 /// Get the espeak-ng executable path (bundled or system).
+/// In test context, auto-initializes from system paths if not set by app setup.
 pub fn espeak_exe() -> &'static PathBuf {
-    ESPEAK_PATH.get().expect("espeak path not initialized")
+    ESPEAK_PATH.get_or_init(|| {
+        // Fallback for tests: find system espeak-ng
+        #[cfg(target_os = "windows")]
+        { PathBuf::from("C:/Program Files/eSpeak NG/espeak-ng.exe") }
+        #[cfg(target_os = "macos")]
+        {
+            if PathBuf::from("/opt/homebrew/bin/espeak-ng").exists() {
+                PathBuf::from("/opt/homebrew/bin/espeak-ng")
+            } else {
+                PathBuf::from("/usr/local/bin/espeak-ng")
+            }
+        }
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        { PathBuf::from("/usr/bin/espeak-ng") }
+    })
 }
 
 /// Get the espeak-ng data directory.
+/// In test context, auto-initializes from system paths if not set by app setup.
 pub fn espeak_data() -> &'static PathBuf {
-    ESPEAK_DATA.get().expect("espeak data not initialized")
+    ESPEAK_DATA.get_or_init(|| {
+        #[cfg(target_os = "windows")]
+        { PathBuf::from("C:/Program Files/eSpeak NG/espeak-ng-data") }
+        #[cfg(target_os = "macos")]
+        {
+            if PathBuf::from("/opt/homebrew/share/espeak-ng-data").exists() {
+                PathBuf::from("/opt/homebrew/share/espeak-ng-data")
+            } else {
+                PathBuf::from("/usr/local/share/espeak-ng-data")
+            }
+        }
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        { PathBuf::from("/usr/share/espeak-ng-data") }
+    })
 }
 
 /// Get the resolved dictionary directory.
+/// In test context, auto-initializes to the bundled resource path if not set by app setup.
 pub fn dict_dir() -> &'static PathBuf {
-    DICT_DIR.get().expect("dict dir not initialized")
+    DICT_DIR.get_or_init(|| {
+        // Fallback for tests: try resources/dict/ relative to manifest dir, then app data
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let bundled = manifest.join("resources/dict");
+        if bundled.join("es-en.tsv").exists() {
+            return bundled;
+        }
+        // App data fallback
+        #[cfg(target_os = "windows")]
+        {
+            let appdata = std::env::var("APPDATA").unwrap_or_default();
+            PathBuf::from(appdata).join("com.lingualens.app/models/dict")
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+            PathBuf::from(home).join("Library/Application Support/com.lingualens.app/models/dict")
+        }
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        { PathBuf::from("/tmp") }
+    })
 }
 
 #[cfg(target_os = "windows")]
