@@ -44,11 +44,17 @@ jobs:
           workspaces: src-tauri
           cache-on-failure: true
 
-      # Windows: install espeak-ng via choco
+      # Windows: install espeak-ng from GitHub release (choco CDN is unreliable)
       - if: matrix.os == 'windows-latest'
         name: Install espeak-ng (Windows)
-        shell: pwsh
-        run: choco install espeak-ng -y --no-progress
+        shell: bash
+        run: |
+          curl -sL "https://github.com/espeak-ng/espeak-ng/releases/download/1.51/espeak-ng-X64.msi" -o espeak-ng.msi
+          msiexec //i espeak-ng.msi //qn //norestart
+          for i in {1..30}; do
+            [[ -f "C:/Program Files/eSpeak NG/espeak-ng.exe" ]] && break
+            sleep 1
+          done
 
       # macOS: install espeak-ng via brew
       - if: matrix.os == 'macos-latest'
@@ -68,7 +74,6 @@ jobs:
             cp "$ESPEAK_DIR/libespeak-ng.dll" src-tauri/resources/espeak-ng/
             cp -r "$ESPEAK_DIR/espeak-ng-data" src-tauri/resources/espeak-ng/
           else
-            # macOS — Homebrew installs to /opt/homebrew (ARM) or /usr/local (Intel)
             if [[ -f /opt/homebrew/bin/espeak-ng ]]; then
               ESPEAK_BIN=/opt/homebrew/bin/espeak-ng
               ESPEAK_DATA=/opt/homebrew/share/espeak-ng-data
@@ -78,6 +83,7 @@ jobs:
             fi
             cp "$ESPEAK_BIN" src-tauri/resources/espeak-ng/
             cp -r "$ESPEAK_DATA" src-tauri/resources/espeak-ng/
+            chmod -R u+rw src-tauri/resources/espeak-ng/
           fi
 
       - name: Build Tauri app
